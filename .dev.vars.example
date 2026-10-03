@@ -1,0 +1,10 @@
+# Copy to .dev.vars for local development (`npm run dev`). Never commit .dev.vars.
+
+# Paste the service account key JSON on ONE line, wrapped in SINGLE quotes
+# (double quotes would make dotenv rewrite the \n escapes inside private_key).
+GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account","project_id":"...","private_key_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n","client_email":"...@....iam.gserviceaccount.com","token_uri":"https://oauth2.googleapis.com/token"}'
+
+# Skip Turnstile locally. Never set this in production.
+TURNSTILE_DISABLED=true
+# Or test the real check with Cloudflare's always-pass test secret:
+# TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA

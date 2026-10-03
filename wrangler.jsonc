@@ -1,0 +1,38 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "tts-studio",
+	"compatibility_date": "2026-10-01",
+	"main": "./workers/app.ts",
+	"observability": {
+		"enabled": true
+	},
+	"vars": {
+		// Defaults applied when a request omits the field.
+		"DEFAULT_ENGINE": "chirp3-hd",
+		"DEFAULT_LANGUAGE": "fr-FR",
+		// Hard cap on characters per /api/tts request (cost control).
+		"MAX_CHARS": "5000",
+		// Use https://eu-texttospeech.googleapis.com to keep processing in the EU.
+		"GOOGLE_TTS_ENDPOINT": "https://texttospeech.googleapis.com",
+		// How long synthesized audio stays in the KV cache (30 days).
+		"CACHE_TTL_SECONDS": "2592000"
+	},
+	// Secrets (set with `wrangler secret put`, or in .dev.vars locally):
+	//   GOOGLE_SERVICE_ACCOUNT_JSON  - full service account key JSON
+	//   TURNSTILE_SECRET_KEY         - Cloudflare Turnstile secret key
+	"ratelimits": [
+		{
+			"name": "TTS_RATE_LIMITER",
+			"namespace_id": "1001",
+			// Per client IP, per Cloudflare location. Period must be 10 or 60.
+			"simple": { "limit": 10, "period": 60 }
+		}
+	],
+	"kv_namespaces": [
+		{
+			// Audio cache. Create with `npx wrangler kv namespace create tts-studio-cache`
+			// and paste the returned id here before deploying.
+			"binding": "TTS_CACHE"
+		}
+	]
+}
