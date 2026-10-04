@@ -10,6 +10,13 @@ import { PAUSE_RE, stripPauses } from "./text";
 import { BTN, BTN_PRIMARY, Code, Diagnostics, IconButton, ICONS, jumpToLine, Note } from "./ui";
 
 /**
+ * French sets a space before ? ! : ; » and after «. Shown as a no-break space,
+ * it keeps the mark from wrapping onto a line of its own. One character for
+ * one, so offsets into the line still hold.
+ */
+const keepTogether = (text: string) => text.replace(/ (?=[?!:;»])|(?<=«) /g, " ");
+
+/**
  * Renders a line, showing pause markers as chips and tinting the segment being
  * spoken. Google returns no word timings, so the highlight follows whole
  * segments rather than individual words.
@@ -42,7 +49,7 @@ function LineText({ text, range, color }: { text: string; range: [number, number
         parts.push(
           <span
             key={a}
-            className="mx-0.5 align-middle rounded-full border border-rule bg-soft px-1.5 py-0.5 font-ui text-xs text-muted"
+            className="mx-0.5 whitespace-nowrap align-middle rounded-full border border-rule bg-soft px-1.5 py-0.5 font-ui text-xs text-muted"
           >
             pause {mark[2]} s
           </span>,
@@ -50,7 +57,7 @@ function LineText({ text, range, color }: { text: string; range: [number, number
       }
       continue;
     }
-    const slice = text.slice(a, b);
+    const slice = keepTogether(text.slice(a, b));
     const lit = range && a >= range[0] && b <= range[1];
     parts.push(
       lit ? (
@@ -139,7 +146,7 @@ export function ScriptLines({
   }
 
   return (
-    <div className="max-w-[820px]">
+    <div>
       {!script.lines.length && (
         <div className="mb-3 rounded-xl border border-dashed border-rule px-4 py-6">
           <p className="mb-1.5">This script is empty.</p>
@@ -162,7 +169,7 @@ export function ScriptLines({
           <div
             key={line.id}
             ref={state.line === index ? currentRef : null}
-            className={`group relative grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 rounded-r-lg border-l-4 py-2.5 pl-3 pr-2 sm:grid-cols-[132px_minmax(0,1fr)_auto] ${
+            className={`group relative grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 rounded-r-lg border-l-4 py-2.5 pl-3 pr-2 sm:grid-cols-[132px_minmax(0,1fr)_auto] sm:gap-x-6 ${
               active ? "bg-now" : "hover:bg-soft"
             }`}
             style={{ borderLeftColor: active || cued ? speaker.color : "transparent" }}

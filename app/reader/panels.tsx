@@ -369,9 +369,6 @@ export function PlaybackPanel({ reader }: { reader: Reader }) {
       <Check checked={prefs.notes} onChange={(v) => editPrefs((d) => void (d.notes = v))}>
         Show translations under each line
       </Check>
-      <Check checked={prefs.hide} onChange={(v) => editPrefs((d) => void (d.hide = v))}>
-        Blur every line for dictation, then show them one by one (the Blur button below does the same)
-      </Check>
 
       <Field label="Appearance">
         <select

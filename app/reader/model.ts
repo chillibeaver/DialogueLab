@@ -211,7 +211,7 @@ export function defaultPrefs(): Prefs {
     loop: false,
     follow: true,
     hide: false,
-    theme: "auto",
+    theme: "dark",
     sideCollapsed: false,
     dict: DEFAULT_DICT.map((rule) => ({ ...rule })),
     currentId: null,

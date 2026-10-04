@@ -2,6 +2,19 @@ import { isRouteErrorResponse, Links, Meta, Outlet, Scripts, ScrollRestoration }
 
 import type { Route } from "./+types/root";
 import "./app.css";
+import { LS_KEY } from "./reader/model";
+
+/**
+ * The page is dark until told otherwise. The HTML says so, and this runs
+ * before the first paint to apply a theme the visitor chose, so neither a
+ * light system nor a saved choice makes the page flash the other theme
+ * while the app loads.
+ */
+const THEME_SCRIPT = `try {
+  var theme = JSON.parse(localStorage.getItem(${JSON.stringify(LS_KEY)})).prefs.theme;
+  if (theme === "light") document.documentElement.dataset.theme = "light";
+  if (theme === "auto") document.documentElement.removeAttribute("data-theme");
+} catch (error) {}`;
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -36,11 +49,13 @@ const STRUCTURED_DATA = {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    // The theme script may change data-theme before React hydrates.
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="theme-color" content="#09090b" />
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
         <Meta />
         <Links />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }} />

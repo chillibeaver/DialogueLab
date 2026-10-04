@@ -398,7 +398,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   return (
     <>
       <header ref={headerRef} className="sticky top-0 z-20 border-b border-rule bg-surface">
-        <div className="mx-auto flex max-w-[1280px] items-center gap-3 px-5 py-2.5">
+        <div className="mx-auto flex max-w-[1536px] items-center gap-3 px-5 py-2.5">
           <IconButton
             label={sideOpen || !collapsed ? "Hide sidebar" : "Show sidebar"}
             path={ICONS.sidebar}
@@ -432,7 +432,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       </header>
 
       <div
-        className={`mx-auto grid max-w-[1280px] ${collapsed ? "" : "md:grid-cols-[352px_minmax(0,1fr)]"}`}
+        className={`mx-auto grid max-w-[1536px] ${collapsed ? "" : "md:grid-cols-[352px_minmax(0,1fr)]"}`}
         style={{ paddingBottom: "calc(var(--tbh) + 24px)" }}
       >
         <aside
@@ -479,7 +479,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           />
         )}
 
-        <main className={`min-w-0 px-4 py-5 sm:px-8 ${collapsed ? "mx-auto w-full max-w-[1000px]" : ""}`}>
+        <main className={`min-w-0 px-4 py-5 sm:px-8 ${collapsed ? "mx-auto w-full max-w-[1240px]" : ""}`}>
           <h1 className="sr-only">{TITLE}</h1>
 
           {state.error && (
@@ -541,7 +541,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         </div>
 
         {/* Phones: status and settings on top, transport centred below. Wider: one row. */}
-        <div className="mx-auto grid max-w-[1280px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 px-3 py-2 sm:grid-cols-[1fr_auto_1fr] sm:gap-3 sm:px-5 sm:py-2.5">
+        <div className="mx-auto grid max-w-[1536px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 px-3 py-2 sm:grid-cols-[1fr_auto_1fr] sm:gap-3 sm:px-5 sm:py-2.5">
           <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-2.5 text-sm">
             <span
               className="h-3 w-3 shrink-0 rounded-full"
