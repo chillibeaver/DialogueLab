@@ -1,15 +1,37 @@
 @import "tailwindcss" source(".");
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif,
-    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
 }
 
-html,
-body {
-  @apply bg-white dark:bg-gray-950;
+/* The tool is dark only, so the theme is fixed rather than following the OS. */
+html {
+  color-scheme: dark;
+  background-color: var(--color-zinc-950);
+}
 
-  @media (prefers-color-scheme: dark) {
-    color-scheme: dark;
-  }
+body {
+  background-color: var(--color-zinc-950);
+  color: var(--color-zinc-300);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Native controls inherit the page font instead of the UA default. */
+input,
+select,
+textarea,
+button {
+  font-family: inherit;
+}
+
+/* Keyboard focus stays visible even where a control sets its own border. */
+:focus-visible {
+  outline: 2px solid var(--color-emerald-500);
+  outline-offset: 2px;
+}
+
+audio {
+  color-scheme: dark;
 }

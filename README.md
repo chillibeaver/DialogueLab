@@ -12,11 +12,34 @@ French-first text-to-speech web tool backed by Google Cloud Text-to-Speech, runn
 | --- | --- |
 | Runtime | Cloudflare Workers |
 | API | [Hono](https://hono.dev) under `/api/*` (`server/`) |
-| Pages | [React Router v8](https://reactrouter.com) framework mode with SSR (`app/`); the frontend is not built yet |
+| Pages | [React Router v8](https://reactrouter.com) framework mode with SSR (`app/`) |
 | Build | Vite + `@cloudflare/vite-plugin` |
+| Styles | Tailwind CSS; every component is hand-written, no UI or component library |
 | Tests | Vitest (`test/`) |
 
 `workers/app.ts` is the Worker entry: requests to `/api/*` go to Hono, and everything else is server-rendered by React Router.
+
+## Frontend
+
+One page at `/`, dark only. It is server-rendered: the voices, languages, models
+and limits come from the route loader, which reads the same `buildCatalog()` the
+API serves, so the first HTML response already contains the full form instead of
+an empty shell waiting on JavaScript.
+
+- **Chirp 3: HD** — voice, language, format, speaking rate.
+- **Gemini-TTS, single voice** — adds a model picker, a style prompt with
+  presets, and buttons that insert Google's markup tags (`[sigh]`,
+  `[whispering]`, `[long pause]`, …) into the text.
+- **Gemini-TTS, dialogue** — two named speakers with their own voices, and a
+  line editor. Renaming a speaker renames it in every line that uses it.
+
+The browser only ever calls `/api/tts` on this origin. When `TURNSTILE_SITE_KEY`
+is set, the page loads Cloudflare's script and sends a fresh token with each
+request; with the key unset, the widget is skipped entirely, which is what local
+development uses.
+
+`/robots.txt` and `/sitemap.xml` are generated from the request host, so they are
+correct on whatever domain the Worker is deployed to.
 
 ## API
 
@@ -173,6 +196,7 @@ Without `TURNSTILE_SECRET_KEY`, `/api/tts` refuses every request (it fails close
 | `MAX_CHARS` | `5000` | Maximum characters per request. |
 | `GOOGLE_TTS_ENDPOINT` | `https://texttospeech.googleapis.com` | Regional endpoint. See the caveat below before changing it. |
 | `CACHE_TTL_SECONDS` | `2592000` (30 days) | How long synthesized audio stays in KV. |
+| `TURNSTILE_SITE_KEY` | — | Public Turnstile key. Sent to the browser; leave unset to skip the widget. |
 
 A regional endpoint such as `https://eu-texttospeech.googleapis.com` keeps
 processing in that region, but regions do not carry every model: only the
@@ -221,6 +245,7 @@ server/google/tts.ts   Google request bodies and error mapping
 server/lib/chunk.ts    Sentence-aware splitting by UTF-8 byte budget
 server/lib/audio.ts    MP3/WAV concatenation
 server/lib/cache.ts    KV audio cache
-app/                   React Router pages (frontend, to be built)
+app/                   The page: loader, form, dialogue editor
+app/context.ts         Worker bindings handed to loaders
 test/                  Vitest suites
 ```

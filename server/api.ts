@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 
-import { DEFAULT_GEMINI_MODEL, DEFAULT_VOICE, GEMINI_MODELS, listLanguages, VOICES } from "./catalog";
+import { buildCatalog } from "./catalog-view";
 import { readConfig, type Bindings } from "./config";
 import { ApiError, errorResponse, handleError } from "./errors";
 import { resolveCredential } from "./google/auth";
@@ -10,7 +10,7 @@ import { concatAudio } from "./lib/audio";
 import { cacheKey, readCachedAudio, writeCachedAudio, type CachedAudioMeta } from "./lib/cache";
 import { splitText } from "./lib/chunk";
 import { enforceRateLimit, verifyTurnstile } from "./protection";
-import { DIALOGUE, MAX_PROMPT_CHARS, parseTtsRequest, SPEAKING_RATE } from "./request";
+import { parseTtsRequest } from "./request";
 
 type AppEnv = { Bindings: Bindings };
 
@@ -26,30 +26,7 @@ api.onError(handleError);
 api.get("/health", (c) => c.json({ ok: true }));
 
 api.get("/catalog", (c) => {
-  const config = readConfig(c.env);
-  const catalog = {
-    defaults: { engine: config.defaultEngine, language: config.defaultLanguage, format: "mp3" },
-    limits: { maxChars: config.maxChars, maxPromptChars: MAX_PROMPT_CHARS },
-    formats: Object.keys(AUDIO_FORMATS),
-    voices: VOICES,
-    engines: {
-      "chirp3-hd": {
-        name: "Chirp 3: HD",
-        defaultVoice: DEFAULT_VOICE["chirp3-hd"],
-        speakingRate: SPEAKING_RATE,
-        languages: listLanguages("chirp3-hd", config.defaultLanguage),
-      },
-      gemini: {
-        name: "Gemini-TTS",
-        defaultVoice: DEFAULT_VOICE.gemini,
-        defaultModel: DEFAULT_GEMINI_MODEL,
-        models: Object.entries(GEMINI_MODELS).map(([id, availability]) => ({ id, availability })),
-        languages: listLanguages("gemini", config.defaultLanguage),
-        // Multi-speaker dialogue: send `speakers` and `turns` instead of `text`.
-        dialogue: { speakers: DIALOGUE.speakers, maxTurns: DIALOGUE.maxTurns, maxBytes: DIALOGUE.maxBytes },
-      },
-    },
-  };
+  const catalog = buildCatalog(readConfig(c.env));
   return c.json(catalog, 200, { "cache-control": "public, max-age=3600" });
 });
 

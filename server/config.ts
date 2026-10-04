@@ -13,6 +13,9 @@ export interface Bindings {
   /** Local development only: set to "true" in .dev.vars to skip Turnstile. */
   TURNSTILE_DISABLED?: string;
 
+  /** Public Turnstile site key. Safe to send to the browser; empty disables the widget. */
+  TURNSTILE_SITE_KEY?: string;
+
   // Plain vars (wrangler.jsonc)
   DEFAULT_ENGINE?: string;
   DEFAULT_LANGUAGE?: string;
