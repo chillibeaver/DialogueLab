@@ -116,6 +116,8 @@ export class Player {
   private timer: ReturnType<typeof setTimeout> | null = null;
   /** What a resume should run, captured when playback is paused mid-wait. */
   private resumeStep: (() => void) | null = null;
+  /** Paused partway through a clip: a resume carries on from there. */
+  private midClip = false;
 
   private lineIndex = -1;
   private segments: Segment[] = [];
@@ -401,6 +403,7 @@ export class Player {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.resumeStep = null;
+    this.midClip = false;
     if (this.audio) {
       this.audio.pause();
       this.audio.onended = null;
@@ -527,17 +530,19 @@ export class Player {
     audio.onerror = null;
     audio.src = this.clips.get(request.key)!;
     this.applyVoiceSettings(sp);
+    await this.playLoaded(audio);
+  }
 
-    audio.onended = () => {
+  /** Plays the clip loaded in `audio`, from wherever it stands, then moves on to the next segment. */
+  private async playLoaded(audio: HTMLAudioElement): Promise<void> {
+    const token = this.token;
+    const next = () => {
       if (token !== this.token) return;
       this.segIndex++;
       void this.nextSegment();
     };
-    audio.onerror = () => {
-      if (token !== this.token) return;
-      this.segIndex++;
-      void this.nextSegment();
-    };
+    audio.onended = next;
+    audio.onerror = next;
 
     try {
       await audio.play();
@@ -576,11 +581,15 @@ export class Player {
     this.set({ status: "idle", line: this.lineIndex, range: null, waiting: null });
   }
 
+  /** Pause keeps the place, down to the middle of a clip; stop goes back to the start. */
   pause(): void {
     if (this.state.status !== "playing") return;
     const step = this.resumeStep;
+    const audio = this.audio;
+    const midClip = !step && !!audio && audio.currentTime > 0 && !audio.ended;
     this.halt();
     this.resumeStep = step;
+    this.midClip = midClip;
     this.set({ status: "paused", waiting: null });
   }
 
@@ -588,9 +597,16 @@ export class Player {
     if (this.state.status !== "paused") return;
     this.set({ status: "playing", error: "" });
     const step = this.resumeStep;
+    const midClip = this.midClip;
     this.resumeStep = null;
-    if (step) step();
-    else void this.nextSegment();
+    this.midClip = false;
+    if (step) return step();
+    const line = this.ctx.script.lines[this.lineIndex];
+    if (midClip && this.audio && line) {
+      // Speed or volume may have changed while paused.
+      this.applyVoiceSettings(speakerOf(this.ctx.script, line.sp));
+      void this.playLoaded(this.audio);
+    } else void this.nextSegment();
   }
 
   toggle(): void {
@@ -601,7 +617,7 @@ export class Player {
   }
 
   stop(): void {
-    this.finish(true);
+    this.finish(false);
   }
 
   skip(dir: 1 | -1): void {
