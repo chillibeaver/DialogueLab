@@ -284,8 +284,9 @@ npx wrangler login
 # Audio cache. --binding writes the new namespace's id into wrangler.jsonc.
 npx wrangler kv namespace create tts-studio-cache --binding TTS_CACHE
 
-# Storage for published clips.
-npx wrangler r2 bucket create tts-studio-clips
+# Storage for published clips. --binding matches the existing CLIPS binding;
+# without it Wrangler offers to add a second one.
+npx wrangler r2 bucket create tts-studio-clips --binding CLIPS
 
 # First deploy: prints the site's address. Synthesis stays refused until the
 # secrets below are set, since bot protection fails closed.
@@ -314,6 +315,23 @@ The reader's Turnstile widget stays invisible unless Cloudflare wants the
 visitor to tick a box; it then appears above the transport bar.
 
 Without `TURNSTILE_SECRET_KEY`, `/api/tts` refuses every request (it fails closed) unless `TURNSTILE_DISABLED=true` is set. That flag is for local development only.
+
+#### Deploying from GitHub instead
+
+Workers Builds can deploy every push to `main`. In the dashboard, open the
+Worker, then Settings → Build → Connect, and pick the repository:
+
+| Setting | Value |
+| --- | --- |
+| Build command | `npm test && npm run build` |
+| Deploy command | `npx wrangler deploy` (the default) |
+| Builds for non-production branches | Off: a preview URL would fail the Turnstile hostname check anyway |
+
+The Worker's name must match `name` in `wrangler.jsonc`. Secrets are not part
+of the repository: set them in the dashboard (Settings → Variables and
+Secrets) or with `wrangler secret put`, which changes only the secret and
+keeps the deployed code. Plain `vars` come from `wrangler.jsonc` on every
+deploy, so `TURNSTILE_SITE_KEY` must be committed there.
 
 ### 3. Configuration (`wrangler.jsonc` → `vars`)
 

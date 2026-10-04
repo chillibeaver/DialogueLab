@@ -42,13 +42,15 @@
 			// Audio cache. Create with
 			// `npx wrangler kv namespace create tts-studio-cache --binding TTS_CACHE`,
 			// which adds its id here.
-			"binding": "TTS_CACHE"
+			"binding": "TTS_CACHE",
+			"id": "9c230033fd644e0b92d5448ce85ea788"
 		}
 	],
 	"r2_buckets": [
 		{
 			// Published clips (POST /api/v1/clips): permanent audio behind public URLs.
-			// Create with `npx wrangler r2 bucket create tts-studio-clips` before deploying.
+			// Create with `npx wrangler r2 bucket create tts-studio-clips --binding CLIPS`;
+			// without --binding, Wrangler offers to add a second binding to the same bucket.
 			"binding": "CLIPS",
 			"bucket_name": "tts-studio-clips"
 		}
