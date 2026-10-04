@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 
+import { budgetExhausted, estimateCost, refundBudget, reserveBudget } from "./budget";
 import { buildCatalog } from "./catalog-view";
 import { clips } from "./clips";
 import { readConfig, type Bindings } from "./config";
@@ -82,9 +83,21 @@ api.post(
     if (cached) return audioResponse(cached.audio, options.format, cached.meta, "HIT");
 
     const credential = await resolveCredential(c.env, options.engine);
-    const audioParts = await mapWithConcurrency(parts, SYNTHESIS_CONCURRENCY, (part) =>
-      synthesizeChunk(part, options, { endpoint: config.googleEndpoint, credential }),
-    );
+    // Reserved before Google bills it; given back if Google made none of it.
+    const cost = estimateCost(options, characters, parts.length);
+    if ((await reserveBudget(c.env, config, [cost])) === 0) throw budgetExhausted();
+    let made = 0;
+    let audioParts: Uint8Array<ArrayBuffer>[];
+    try {
+      audioParts = await mapWithConcurrency(parts, SYNTHESIS_CONCURRENCY, async (part) => {
+        const bytes = await synthesizeChunk(part, options, { endpoint: config.googleEndpoint, credential });
+        made++;
+        return bytes;
+      });
+    } catch (error) {
+      if (!made) await refundBudget(c.env, config, [cost]);
+      throw error;
+    }
     const audio = concatAudio(options.format, audioParts);
     const meta: CachedAudioMeta = { chunks: parts.length, characters };
 
@@ -145,6 +158,12 @@ api.post(
 
     const audio = new Map<string, { bytes: Uint8Array<ArrayBuffer>; cache: "HIT" | "MISS" }>();
     let credential: Credential | undefined;
+    const costOf = (w: (typeof work)[number]) => {
+      const item = items[w.indexes[0]];
+      return estimateCost(item.options, item.characters, w.calls);
+    };
+    // Once the month's budget refuses a line, no more are made; cached ones still play.
+    let budgetHit = false;
     const done = await withinBudget(
       work,
       config.subrequestBudget - BUDGET_OVERHEAD,
@@ -153,24 +172,42 @@ api.post(
         const hits = await Promise.all(wave.map((w) => readCachedAudio(c.env.TTS_CACHE, w.key)));
         wave.forEach((w, i) => hits[i] && audio.set(w.key, { bytes: new Uint8Array(hits[i].audio), cache: "HIT" }));
         const misses = wave.filter((_, i) => !hits[i]);
-        if (misses.length) credential ??= await resolveCredential(c.env, engine);
-        await mapWithConcurrency(misses, SYNTHESIS_CONCURRENCY, async (w) => {
+        if (!misses.length || budgetHit) return wave.length;
+        credential ??= await resolveCredential(c.env, engine);
+        const granted = await reserveBudget(c.env, config, misses.map(costOf));
+        budgetHit = granted < misses.length;
+        const making = misses.slice(0, granted);
+        const failed: typeof making = [];
+        let firstError: unknown;
+        await mapWithConcurrency(making, SYNTHESIS_CONCURRENCY, async (w) => {
           const item = items[w.indexes[0]];
-          const bytes = await synthesizeText(textOf(item), item.options, {
-            endpoint: config.googleEndpoint,
-            credential: credential!,
-          });
-          audio.set(w.key, { bytes, cache: "MISS" });
-          const meta: CachedAudioMeta = { chunks: w.calls, characters: item.characters };
-          runInBackground(c, writeCachedAudio(c.env.TTS_CACHE, w.key, bytes, meta, config.cacheTtlSeconds));
+          try {
+            const bytes = await synthesizeText(textOf(item), item.options, {
+              endpoint: config.googleEndpoint,
+              credential: credential!,
+            });
+            audio.set(w.key, { bytes, cache: "MISS" });
+            const meta: CachedAudioMeta = { chunks: w.calls, characters: item.characters };
+            runInBackground(c, writeCachedAudio(c.env.TTS_CACHE, w.key, bytes, meta, config.cacheTtlSeconds));
+          } catch (error) {
+            failed.push(w);
+            firstError ??= error;
+          }
         });
-        return wave.length + misses.reduce((n, w) => n + w.calls + 1, 0);
+        if (failed.length) {
+          await refundBudget(c.env, config, failed.map(costOf));
+          throw firstError;
+        }
+        const ledgerCalls = config.monthlyBudgetMicros === null ? 0 : 1;
+        return wave.length + ledgerCalls + making.reduce((n, w) => n + w.calls + 1, 0);
       },
     );
     if (done === 0) {
       console.error(`SUBREQUEST_BUDGET ${config.subrequestBudget} cannot fit a single line`);
       throw new ApiError(500, "server_misconfigured", "The server's subrequest budget is too small.");
     }
+    // The budget is why nothing could be made: say so, rather than leave every line pending.
+    if (budgetHit && !audio.size) throw budgetExhausted();
 
     const ready = (index: number) => audio.get(work.find((w) => w.indexes.includes(index))!.key);
     const results = items.map((item, index) => {

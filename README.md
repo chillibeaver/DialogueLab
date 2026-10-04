@@ -362,6 +362,8 @@ deploy, so `TURNSTILE_SITE_KEY` must be committed there.
 | `API_DAILY_CHARS` | `200000` | Characters each clips API key may send to Google per UTC day (about US$6 on Chirp 3: HD). |
 | `SUBREQUEST_BUDGET` | `40` | Google calls plus KV and R2 operations one request may make. The free plan allows 50; on a paid plan use e.g. `9000`. |
 | `SITE_URL` | the request's origin | Canonical address, used for the home page's canonical link and `og:url` and for the sitemap. Set it: the home page is rendered at build time on localhost. |
+| `MONTHLY_BUDGET_USD` | none (no cap) | Most the site may spend at Google per calendar month, in US dollars. Needs the `BUDGET` Durable Object binding; without it, synthesis is refused. See "Security and cost model". |
+| `CHIRP_FREE_CHARS` | `1000000` | Chirp 3: HD characters Google does not bill each month. Set `0` if other projects on the billing account use Chirp 3: HD. |
 
 #### API keys and collaborators
 
@@ -416,7 +418,26 @@ In `.dev.vars`, wrap the service account JSON in **single quotes** on one line. 
   2. A per-IP rate limit.
   3. A per-request character cap.
   4. A KV cache: identical requests (same text, voice, engine, options) are billed once.
-  5. Google-side quota caps and budget alerts (see setup).
+  5. **A hard monthly budget** (`MONTHLY_BUDGET_USD`), the one cap that cannot be outrun. See below.
+  6. Google-side quota caps and budget alerts (see setup).
+- Google's own controls do not cap Text-to-Speech spending: budgets only send
+  alerts, the spend caps in preview since July 2026 do not cover Text-to-Speech,
+  and quotas only limit the rate. So the Worker caps it. Every synthesis passes
+  through it, since only it holds the credentials. Before calling Google, a
+  request reserves its estimated cost in a ledger, a single Durable Object
+  (`workers/budget.ts`, `server/budget.ts`) that handles one reservation at a
+  time, so concurrent requests cannot both spend the last dollar. Once the
+  month is spent, the reader, `POST /api/tts` and the clips API answer
+  `429 budget_exhausted` until the next calendar month (US Pacific, as Google
+  bills); cached audio and published clips still play. Costs come from
+  Google's list prices: Chirp 3: HD exactly, after its free characters
+  (`CHIRP_FREE_CHARS`), and Gemini-TTS, which bills the audio it returns, from
+  a deliberately slow 10 characters a second, so the real bill stays at or
+  under the cap. A reservation is given back when Google fails. If the ledger
+  cannot be reached, nothing is synthesized.
+- The cap guards what goes through the site. A leaked Google API key could be
+  used directly, around it: keep the key a secret, restrict it to the
+  Text-to-Speech API, and rotate it if it leaks.
 - Google errors that mention credentials or project details are logged on the server and replaced by generic messages in responses.
 
 ## Project layout

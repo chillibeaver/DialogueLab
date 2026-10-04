@@ -1,6 +1,8 @@
 import { vi } from "vitest";
 
+import type { BudgetLedger, Usage } from "../server/budget";
 import type { Bindings } from "../server/config";
+import { MonthlyBudget } from "../workers/budget";
 
 export function toBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -96,6 +98,36 @@ export function fakeKv() {
     },
   };
   return { kv: kv as unknown as KVNamespace, store, ops };
+}
+
+/**
+ * The real MonthlyBudget Durable Object over an in-memory storage, behind a
+ * namespace that counts each call as the platform does: one subrequest.
+ */
+export function fakeBudget() {
+  const stored = new Map<string, unknown>();
+  const ops = { count: 0 };
+  const state = {
+    storage: {
+      async get(key: string) {
+        return structuredClone(stored.get(key));
+      },
+      async put(key: string, value: unknown) {
+        stored.set(key, structuredClone(value));
+      },
+    },
+  };
+  const ledger = new MonthlyBudget(state as unknown as DurableObjectState, {} as Env);
+  const stub: BudgetLedger = {
+    reserve: (...args) => (ops.count++, ledger.reserve(...args)),
+    refund: (...args) => (ops.count++, ledger.refund(...args)),
+  };
+  const namespace = { idFromName: (name: string) => name, get: () => stub };
+  return {
+    namespace: namespace as unknown as DurableObjectNamespace,
+    ops,
+    usage: (month: string) => stored.get(`usage:${month}`) as Usage | undefined,
+  };
 }
 
 export function fakeRateLimiter(allow: boolean) {

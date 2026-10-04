@@ -54,3 +54,6 @@ app.all("*", (c) => {
 export default {
   fetch: app.fetch,
 } satisfies ExportedHandler<Env>;
+
+// Durable Object classes must be exported from the Worker's entry module.
+export { MonthlyBudget } from "./budget";

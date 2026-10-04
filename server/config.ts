@@ -33,12 +33,18 @@ export interface Bindings {
   SUBREQUEST_BUDGET?: string;
   /** Canonical origin, such as https://tts.example.org; the request's origin when unset. */
   SITE_URL?: string;
+  /** Most the site may spend at Google per month, in US dollars. Unset: no cap. */
+  MONTHLY_BUDGET_USD?: string;
+  /** Chirp 3: HD characters Google does not bill each month (its free tier). */
+  CHIRP_FREE_CHARS?: string;
 
   // Bindings (optional so the API degrades gracefully when one is missing)
   TTS_RATE_LIMITER?: RateLimit;
   TTS_CACHE?: KVNamespace;
   /** Published clips: permanent audio files behind public URLs. */
   CLIPS?: R2Bucket;
+  /** The monthly spending ledger (workers/budget.ts); required when MONTHLY_BUDGET_USD is set. */
+  BUDGET?: DurableObjectNamespace;
 }
 
 export interface Config {
@@ -49,11 +55,21 @@ export interface Config {
   cacheTtlSeconds: number;
   apiDailyChars: number;
   subrequestBudget: number;
+  /** Null when no monthly budget is set. */
+  monthlyBudgetMicros: number | null;
+  chirpFreeChars: number;
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** A budget in dollars, as micro-dollars; null when unset or not a number. "0" is a valid budget. */
+function dollarsToMicros(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed * 1e6) : null;
 }
 
 export function readConfig(env: Bindings): Config {
@@ -69,5 +85,8 @@ export function readConfig(env: Bindings): Config {
     apiDailyChars: positiveInt(env.API_DAILY_CHARS, 200_000),
     // The Workers free plan allows 50 per request; raise to ~9000 on a paid plan.
     subrequestBudget: positiveInt(env.SUBREQUEST_BUDGET, 40),
+    monthlyBudgetMicros: dollarsToMicros(env.MONTHLY_BUDGET_USD),
+    // "0" means none are free, e.g. when other projects share the billing account.
+    chirpFreeChars: env.CHIRP_FREE_CHARS === "0" ? 0 : positiveInt(env.CHIRP_FREE_CHARS, 1_000_000),
   };
 }

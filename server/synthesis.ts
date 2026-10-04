@@ -55,10 +55,12 @@ export async function synthesizeText(
 
 /**
  * Subrequests every request may need besides its items: the Turnstile check,
- * an OAuth token exchange, and a little margin. Calls to Google and every KV
- * or R2 operation count toward the Workers limit of 50 per request on the free
- * plan (10,000 on paid), so each endpoint spends a budget and returns the rest
- * of its work as pending, for the client to ask again.
+ * an OAuth token exchange, and the spending ledger's reservation and refund
+ * in the last wave (server/budget.ts; earlier waves count theirs as they go).
+ * Calls to Google, to the ledger, and every KV or R2 operation count toward
+ * the Workers limit of 50 per request on the free plan (10,000 on paid), so
+ * each endpoint spends a budget and returns the rest of its work as pending,
+ * for the client to ask again.
  */
 export const BUDGET_OVERHEAD = 4;
 

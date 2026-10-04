@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
+import { addCosts, budgetExhausted, estimateCost, refundBudget, reserveBudget, type Cost } from "./budget";
 import {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_VOICE,
@@ -28,6 +29,7 @@ import {
   mapWithConcurrency,
   runInBackground,
   SYNTHESIS_CONCURRENCY,
+  synthesisCalls,
   synthesizeText,
   withinBudget,
 } from "./synthesis";
@@ -226,6 +228,15 @@ async function writeQuota(kv: KVNamespace | undefined, name: string, used: numbe
 
 /* ---------- synthesis ---------- */
 
+/** What a clip will cost at Google, part by part. */
+function clipCost(item: ClipItem): Cost {
+  return addCosts(
+    item.parts.map((part) =>
+      estimateCost(part.options, Array.from(part.text).length, synthesisCalls(part.text, part.options)),
+    ),
+  );
+}
+
 /** One clip: each part (a sentence, or a dialogue turn) in its own voice, joined in order. */
 async function synthesizeClip(config: Config, credential: Credential, item: ClipItem) {
   const audio = [];
@@ -305,6 +316,9 @@ clips.post(
     const limit = config.apiDailyChars;
     let room = limit - used;
     let overQuota = 0;
+    // Once the site's monthly budget refuses a clip, no more are made.
+    let overBudget = 0;
+    let budgetHit = false;
     let credential: Credential | undefined;
 
     await withinBudget(
@@ -323,8 +337,18 @@ clips.post(
           room -= item.characters;
           return true;
         });
-        if (affordable.length) credential ??= await resolveCredential(c.env, engine);
-        await mapWithConcurrency(affordable, SYNTHESIS_CONCURRENCY, async (item) => {
+        if (!affordable.length) return wave.length;
+        if (budgetHit) {
+          overBudget += affordable.length;
+          return wave.length;
+        }
+        credential ??= await resolveCredential(c.env, engine);
+        const granted = await reserveBudget(c.env, config, affordable.map(clipCost));
+        budgetHit = granted < affordable.length;
+        overBudget += affordable.length - granted;
+        const making = affordable.slice(0, granted);
+        const refunds: Cost[] = [];
+        await mapWithConcurrency(making, SYNTHESIS_CONCURRENCY, async (item) => {
           try {
             await bucket.put(objectKey(item.id), await synthesizeClip(config, credential!, item), {
               httpMetadata: { contentType: "audio/mpeg", cacheControl: IMMUTABLE },
@@ -334,17 +358,21 @@ clips.post(
             ready.add(item.id);
           } catch (error) {
             if (!(error instanceof ApiError)) console.error("Clip synthesis failed", error);
+            refunds.push(clipCost(item));
             failed.set(
               item.id,
               error instanceof ApiError ? error : new ApiError(502, "synthesis_failed", "This clip could not be made."),
             );
           }
         });
-        return wave.length + affordable.reduce((n, item) => n + item.calls + 1, 0);
+        await refundBudget(c.env, config, refunds);
+        const ledgerCalls = config.monthlyBudgetMicros === null ? 0 : 1 + (refunds.length ? 1 : 0);
+        return wave.length + ledgerCalls + making.reduce((n, item) => n + item.calls + 1, 0);
       },
     );
 
-    // Nothing could be made, and the daily budget is why: say so instead of returning "pending" forever.
+    // Nothing could be made, and a budget is why: say so instead of returning "pending" forever.
+    if (overBudget && !created.size) throw budgetExhausted();
     if (overQuota && !created.size) {
       throw new ApiError(
         429,

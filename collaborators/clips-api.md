@@ -403,7 +403,8 @@ Errors are JSON: `{ "error": { "code": "…", "message": "…" } }`.
 | item `failed` | `too_many_parts` | A dialogue too long for one request. Split it into shorter `turns` items. |
 | 429 | `rate_limited` | Wait `Retry-After` seconds, then repeat the request. |
 | 429 | `quota_exceeded` | **Stop.** The key's daily character budget is spent; `details.resetsAt` says when it renews. Tell the human. |
-| 502, 503 | `upstream_*`, `engine_unavailable`, `clips_unavailable` | A service problem. Retry later, or tell the human. |
+| 429 | `budget_exhausted` | **Stop.** The site's monthly budget for new audio is spent; `details.resetsAt` says when it renews. Clips already made keep working. Tell the human. |
+| 502, 503 | `upstream_*`, `engine_unavailable`, `clips_unavailable`, `budget_unavailable` | A service problem. Retry later, or tell the human. |
 
 ## Checklist
 

@@ -20,6 +20,8 @@ GOOGLE_TTS_API_KEY=AIza...
 
 # Skip Turnstile locally. Never set this in production.
 TURNSTILE_DISABLED=true
+# The site key in wrangler.jsonc only works on the live domain: no widget locally.
+TURNSTILE_SITE_KEY=
 # Or test the real check with Cloudflare's always-pass test secret:
 # TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
 
