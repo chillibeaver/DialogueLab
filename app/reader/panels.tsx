@@ -5,6 +5,7 @@ import {
   clone,
   COLORS,
   makeSpeaker,
+  missingDefaults,
   nextColor,
   nextSpeakerName,
   type Engine,
@@ -20,6 +21,7 @@ import {
   Check,
   Code,
   Field,
+  FIELD,
   Heading,
   Icon,
   IconButton,
@@ -45,6 +47,8 @@ export interface Reader {
   openScript: (id: string) => void;
   toast: (message: string, undo?: () => void) => void;
   previewSpeaker: (speaker: Speaker) => void;
+  /** Speaks a piece of text in the first speaker's voice, with the dictionary applied. */
+  previewText: (text: string) => void;
   exportAudio: () => void;
   busy: boolean;
 }
@@ -410,67 +414,98 @@ export function PlaybackPanel({ reader }: { reader: Reader }) {
 
 /* ---------- Dictionary ---------- */
 
+function languageName(code: string): string {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
 export function DictionaryPanel({ reader }: { reader: Reader }) {
-  const { prefs, editPrefs, script, previewSpeaker } = reader;
+  const { prefs, editPrefs, previewText } = reader;
+  const missing = missingDefaults(prefs.dict);
+
+  // Rules for every language first, then one group per language.
+  const groups = new Map<string, number[]>();
+  prefs.dict.forEach((rule, index) => groups.set(rule.lang ?? "", [...(groups.get(rule.lang ?? "") ?? []), index]));
+  const order = [...groups.keys()].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)));
+
   return (
     <div>
       <Note>
         <p>
           Before a line is read, each spelling on the left is replaced by the pronunciation on the right. The text on
-          screen does not change. Useful for abbreviations and names, for example <Code>Mme</Code> read as{" "}
-          <Code>Madame</Code>. Matching is case-sensitive, and Latin-script entries match whole words only.
+          screen does not change. Matching is case-sensitive, and Latin-script entries match whole words only. Common
+          French abbreviations come built in and apply to French scripts only.
         </p>
       </Note>
 
-      <div className="mt-3">
-        {prefs.dict.map((rule, index) => (
-          <div key={index} className="mb-2 flex items-center gap-1.5">
-            <input
-              type="checkbox"
-              checked={rule.on}
-              aria-label="Enable this rule"
-              onChange={(e) => editPrefs((d) => void (d.dict[index].on = e.target.checked))}
-              className="accent-accent"
-            />
-            <input
-              type="text"
-              value={rule.from}
-              placeholder="Spelling"
-              aria-label="Spelling in the text"
-              onChange={(e) => editPrefs((d) => void (d.dict[index].from = e.target.value))}
-              className={INPUT}
-            />
-            <span className="shrink-0 text-sm text-muted">reads as</span>
-            <input
-              type="text"
-              value={rule.to}
-              placeholder="Pronunciation"
-              aria-label="Read it as"
-              onChange={(e) => editPrefs((d) => void (d.dict[index].to = e.target.value))}
-              className={INPUT}
-            />
-            <IconButton
-              label="Preview pronunciation"
-              path={ICONS.hear}
-              onClick={() => previewSpeaker({ ...script.speakers[0], prompt: "" })}
-            />
-            <IconButton
-              label="Delete this rule"
-              path={ICONS.x}
-              onClick={() => editPrefs((d) => void d.dict.splice(index, 1))}
-            />
-          </div>
-        ))}
-      </div>
+      {order.map((lang) => (
+        <section key={lang || "all"} className="mt-4">
+          <Heading>{lang ? `${languageName(lang)} scripts` : "Every language"}</Heading>
+          {groups.get(lang)!.map((index) => {
+            const rule = prefs.dict[index];
+            return (
+              <div key={index} className="mb-2 flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={rule.on}
+                  aria-label={`Use the rule for ${rule.from || "this spelling"}`}
+                  onChange={(e) => editPrefs((d) => void (d.dict[index].on = e.target.checked))}
+                  className="accent-accent"
+                />
+                <input
+                  type="text"
+                  value={rule.from}
+                  placeholder="Spelling"
+                  aria-label="Spelling in the text"
+                  onChange={(e) => editPrefs((d) => void (d.dict[index].from = e.target.value))}
+                  className={`${FIELD} w-[4.25rem] shrink-0`}
+                />
+                <span aria-hidden="true" className="shrink-0 text-muted">
+                  →
+                </span>
+                <input
+                  type="text"
+                  value={rule.to}
+                  placeholder="Read as"
+                  aria-label={`How to read ${rule.from || "it"}`}
+                  onChange={(e) => editPrefs((d) => void (d.dict[index].to = e.target.value))}
+                  className={INPUT}
+                />
+                <IconButton
+                  label={`Hear "${rule.to || rule.from}"`}
+                  path={ICONS.hear}
+                  disabled={!rule.to && !rule.from}
+                  onClick={() => previewText(rule.to || rule.from)}
+                />
+                <IconButton
+                  label="Delete this rule"
+                  path={ICONS.x}
+                  onClick={() => editPrefs((d) => void d.dict.splice(index, 1))}
+                />
+              </div>
+            );
+          })}
+        </section>
+      ))}
 
-      <button
-        type="button"
-        className={BTN}
-        onClick={() => editPrefs((d) => void d.dict.push({ from: "", to: "", on: true }))}
-      >
-        <Icon path={ICONS.plus} size={16} />
-        Add a rule
-      </button>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={BTN}
+          onClick={() => editPrefs((d) => void d.dict.push({ from: "", to: "", on: true }))}
+        >
+          <Icon path={ICONS.plus} size={16} />
+          Add a rule
+        </button>
+        {missing.length > 0 && (
+          <button type="button" className={BTN} onClick={() => editPrefs((d) => void d.dict.push(...missingDefaults(d.dict)))}>
+            Restore common abbreviations ({missing.length})
+          </button>
+        )}
+      </div>
     </div>
   );
 }

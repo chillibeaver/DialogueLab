@@ -60,12 +60,58 @@ export interface Prefs {
   currentId: string | null;
   /** Show each line's translation under it. */
   notes: boolean;
+  /** Which version of DEFAULT_DICT has been added to `dict`. */
+  dictDefaults: number;
 }
 
 export interface DictRule {
   from: string;
   to: string;
   on: boolean;
+  /** Primary language subtag the rule is for, such as "fr"; absent means every language. */
+  lang?: string;
+}
+
+/**
+ * Common French abbreviations, which speech engines may spell out letter by
+ * letter. They only apply to French scripts, so "Dr Smith" stays English.
+ * Order matters where one spelling contains another: "Dr." before "Dr".
+ */
+export const DEFAULT_DICT: readonly DictRule[] = [
+  ["Mme", "Madame"],
+  ["Mmes", "Mesdames"],
+  ["Mlle", "Mademoiselle"],
+  ["Mlles", "Mesdemoiselles"],
+  ["M.", "Monsieur"],
+  ["MM.", "Messieurs"],
+  ["Dr.", "Docteur"],
+  ["Dr", "Docteur"],
+  ["Dre", "Docteure"],
+  ["Pr", "Professeur"],
+  ["St", "Saint"],
+  ["Ste", "Sainte"],
+  ["qch", "quelque chose"],
+  ["qqch", "quelque chose"],
+  ["qn", "quelqu'un"],
+  ["qqn", "quelqu'un"],
+  ["c.-à-d.", "c'est-à-dire"],
+  ["p. ex.", "par exemple"],
+  ["env.", "environ"],
+  ["n°", "numéro"],
+  ["svp", "s'il vous plaît"],
+  ["SVP", "s'il vous plaît"],
+  ["stp", "s'il te plaît"],
+  ["rdv", "rendez-vous"],
+  ["RDV", "rendez-vous"],
+].map(([from, to]) => ({ from, to, on: true, lang: "fr" }));
+
+/** Bump when DEFAULT_DICT gains rules, so existing libraries are offered the new ones once. */
+export const DICT_DEFAULTS_VERSION = 1;
+
+/** The default rules missing from `dict`, matched by spelling. */
+export function missingDefaults(dict: readonly DictRule[]): DictRule[] {
+  const have = new Set(dict.map((rule) => rule.from));
+  return DEFAULT_DICT.filter((rule) => !have.has(rule.from)).map((rule) => ({ ...rule }));
 }
 
 export interface Store {
@@ -167,10 +213,25 @@ export function defaultPrefs(): Prefs {
     hide: false,
     theme: "auto",
     sideCollapsed: false,
-    dict: [],
+    dict: DEFAULT_DICT.map((rule) => ({ ...rule })),
     currentId: null,
     notes: true,
+    dictDefaults: DICT_DEFAULTS_VERSION,
   };
+}
+
+/**
+ * Settings read back from storage. Rules added to DEFAULT_DICT since they were
+ * saved are offered once; a default the user deleted afterwards stays deleted.
+ */
+export function restorePrefs(saved: Partial<Prefs> | undefined): Prefs {
+  const prefs: Prefs = { ...defaultPrefs(), ...saved };
+  if ((saved?.dictDefaults ?? 0) < DICT_DEFAULTS_VERSION) {
+    const dict = saved?.dict ?? [];
+    prefs.dict = [...dict, ...missingDefaults(dict)];
+    prefs.dictDefaults = DICT_DEFAULTS_VERSION;
+  }
+  return prefs;
 }
 
 export function speakerOf(script: Script, id: string): Speaker {

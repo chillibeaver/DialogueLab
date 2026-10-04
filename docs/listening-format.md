@@ -174,6 +174,12 @@ Languages: `fr-FR`, `fr-CA`, `en-US`, `en-GB`, `es-ES`, `de-DE`, `it-IT`,
 Serveur: Le code est sur le ticket. [1] Et voilà, ça fait quatre euros.
 ```
 
+**Abbreviations.** In French scripts, TTS Studio reads common abbreviations
+in full: `Mme`, `M.`, `Dr`, `qch`, `qn`, `p. ex.`, `svp` and others are read as
+*Madame*, *Monsieur*, *Docteur*, *quelque chose*, *quelqu'un*, *par exemple*,
+*s'il vous plaît*. The text on screen keeps the abbreviation. The full list is
+under **Dictionary**, where rules can be switched off or added.
+
 **Gemini markup tags.** With the `gemini` engine, tags such as `[sigh]`,
 `[laughing]`, `[whispering]`, `[short pause]` or `[long pause]` change the
 delivery. Chirp 3: HD would read them aloud, and the importer warns about that.

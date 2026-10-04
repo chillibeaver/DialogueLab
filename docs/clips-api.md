@@ -344,6 +344,9 @@ Languages include `fr-FR`, `fr-CA`, `en-US`, `en-GB`, `es-ES`, `de-DE`,
 ## In the text
 
 - Text is read exactly as written. A changed comma is a new clip.
+- **Write abbreviations out in full**: `Madame`, not `Mme`; `quelque chose`,
+  not `qch`; `Monsieur Dubois`, not `M. Dubois`. Nothing expands them here, and
+  a voice may spell them letter by letter.
 - `[1.5]` is **not** a pause in this API; it would be read aloud. To separate
   sentences, use punctuation, or make separate clips.
 - With `"engine": "gemini"` only, markup such as `[sigh]` or `[whispering]`

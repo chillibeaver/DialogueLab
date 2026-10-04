@@ -50,12 +50,15 @@ export function pauseTotalMs(text: string): number {
 
 /**
  * Applies the pronunciation dictionary. Latin-script entries match whole words
- * only, so a rule for "Mme" does not fire inside another word.
+ * only, so a rule for "Mme" does not fire inside another word, and a rule tied
+ * to a language only applies to scripts in that language.
  */
-export function applyDict(text: string, dict: DictRule[]): string {
+export function applyDict(text: string, dict: readonly DictRule[], lang: string): string {
+  const primary = lang.split("-")[0].toLowerCase();
   let out = text;
   for (const rule of dict) {
     if (!rule.on || !rule.from) continue;
+    if (rule.lang && rule.lang !== primary) continue;
     try {
       const escaped = rule.from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const wordLike =

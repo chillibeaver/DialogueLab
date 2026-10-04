@@ -2,9 +2,12 @@
 
 import type { ReactNode } from "react";
 
-export const INPUT =
-  "w-full min-w-0 rounded-md border border-rule bg-surface px-2.5 py-1.5 text-sm " +
+/** A text field without a width, for layouts that size it themselves. */
+export const FIELD =
+  "min-w-0 rounded-md border border-rule bg-surface px-2.5 py-1.5 text-sm " +
   "placeholder:text-muted focus:border-accent focus:outline-none";
+
+export const INPUT = `w-full ${FIELD}`;
 
 const BUTTON =
   "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm " +

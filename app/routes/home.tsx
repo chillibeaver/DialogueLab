@@ -9,6 +9,7 @@ import {
   effectiveRate,
   loadStore,
   makeScript,
+  restorePrefs,
   saveStore,
   speakerOf,
   uid,
@@ -126,7 +127,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   useEffect(() => {
     const saved = loadStore();
     if (saved?.scripts && Object.keys(saved.scripts).length) {
-      setStore({ scripts: saved.scripts, prefs: { ...defaultPrefs(), ...saved.prefs } });
+      setStore({ scripts: saved.scripts, prefs: restorePrefs(saved.prefs) });
     }
     setHydrated(true);
   }, []);
@@ -134,6 +135,24 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   useEffect(() => {
     if (hydrated) saveStore(store);
   }, [store, hydrated]);
+
+  // The sticky header and the fixed transport bar change height with the
+  // viewport (the bar wraps on phones); the sidebar and the page's bottom
+  // padding are sized from these, so content never hides behind either bar.
+  const headerRef = useRef<HTMLElement | null>(null);
+  const footerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const root = document.documentElement;
+    const measure = () => {
+      if (headerRef.current) root.style.setProperty("--toph", `${headerRef.current.offsetHeight}px`);
+      if (footerRef.current) root.style.setProperty("--tbh", `${footerRef.current.offsetHeight}px`);
+    };
+    const observer = new ResizeObserver(measure);
+    if (headerRef.current) observer.observe(headerRef.current);
+    if (footerRef.current) observer.observe(footerRef.current);
+    measure();
+    return () => observer.disconnect();
+  }, []);
 
   const prefs = store.prefs;
   const script = store.scripts[prefs.currentId ?? ""] ?? Object.values(store.scripts)[0];
@@ -308,6 +327,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     openScript,
     toast,
     previewSpeaker,
+    previewText: (text: string) => void player.say(text, script.speakers[0]),
     exportAudio,
     busy,
   };
@@ -362,7 +382,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   return (
     <>
-      <header className="sticky top-0 z-20 border-b border-rule bg-surface">
+      <header ref={headerRef} className="sticky top-0 z-20 border-b border-rule bg-surface">
         <div className="mx-auto flex max-w-[1280px] items-center gap-3 px-5 py-2.5">
           <IconButton
             label={sideOpen || !collapsed ? "Hide sidebar" : "Show sidebar"}
@@ -392,7 +412,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
       >
         <aside
           aria-label="Cast and settings"
-          className={`fixed bottom-0 left-0 top-[var(--toph)] z-50 w-[min(390px,92vw)] overflow-auto border-r border-rule bg-surface px-4 pb-6 pt-4 transition-transform md:sticky md:top-[var(--toph)] md:z-0 md:max-h-[calc(100vh-var(--toph))] md:w-auto md:translate-x-0 md:self-start md:px-[18px] ${
+          className={`fixed bottom-0 left-0 top-[var(--toph)] z-50 w-[min(390px,92vw)] overflow-auto border-r border-rule bg-surface px-4 pb-6 pt-4 transition-transform md:sticky md:top-[var(--toph)] md:z-0 md:max-h-[calc(100vh-var(--toph)-var(--tbh))] md:w-auto md:translate-x-0 md:self-start md:px-[18px] ${
             sideOpen ? "translate-x-0" : "-translate-x-[105%]"
           } ${collapsed ? "md:hidden" : ""}`}
         >
@@ -473,7 +493,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         </main>
       </div>
 
-      <footer className="fixed inset-x-0 bottom-0 z-30 border-t border-rule bg-surface">
+      <footer ref={footerRef} className="fixed inset-x-0 bottom-0 z-30 border-t border-rule bg-surface">
         <div
           className="relative h-1.5 cursor-pointer bg-soft"
           onClick={(event) => {

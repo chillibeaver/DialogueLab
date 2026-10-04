@@ -164,7 +164,7 @@ export class Player {
       if (sp.mode === "skip") continue;
       for (const seg of segmentsOf(line.text)) {
         if (seg.kind !== "speech") continue;
-        const spoken = applyDict(seg.text, this.ctx.prefs.dict);
+        const spoken = applyDict(seg.text, this.ctx.prefs.dict, this.ctx.script.lang);
         const prompt = script.engine === "gemini" ? sp.prompt.trim() : "";
         const key = clipKey(script, sp.voice, prompt, spoken);
         if (seen.has(key) || this.clips.has(key)) continue;
@@ -383,7 +383,7 @@ export class Player {
     const script = this.ctx.script;
     const line = script.lines[this.lineIndex];
     const sp = speakerOf(script, line.sp);
-    const spoken = applyDict(segment.text, this.ctx.prefs.dict);
+    const spoken = applyDict(segment.text, this.ctx.prefs.dict, this.ctx.script.lang);
     const prompt = script.engine === "gemini" ? sp.prompt.trim() : "";
     const key = clipKey(script, sp.voice, prompt, spoken);
 
@@ -500,6 +500,41 @@ export class Player {
     void this.beginLine(index);
   }
 
+  /**
+   * Speaks a piece of text in a speaker's voice, outside the script, with the
+   * dictionary applied: how the dictionary previews a rule. It goes through
+   * the same batch endpoint and clip cache as the script, so hearing a preview
+   * twice costs one synthesis.
+   */
+  async say(text: string, sp: Speaker): Promise<void> {
+    this.unlock();
+    this.halt();
+    const script = this.ctx.script;
+    const spoken = applyDict(text, this.ctx.prefs.dict, script.lang).trim();
+    if (!spoken) return;
+    const prompt = script.engine === "gemini" ? sp.prompt.trim() : "";
+    const key = clipKey(script, sp.voice, prompt, spoken);
+
+    this.set({ status: "loading", error: "" });
+    const token = this.token;
+    try {
+      if (!this.clips.has(key)) await this.run([{ key, text: spoken, voice: sp.voice, prompt: prompt || undefined }]);
+    } catch (caught) {
+      this.set({ status: "idle", error: caught instanceof Error ? caught.message : "Synthesis failed." });
+      return;
+    }
+    // Playback started meanwhile owns the status now; leave it alone.
+    if (token !== this.token) return;
+    this.set({ status: "idle", pending: 0 });
+
+    const audio = this.audio!;
+    audio.onended = null;
+    audio.onerror = null;
+    audio.src = this.clips.get(key)!;
+    this.applyVoiceSettings(sp);
+    await audio.play().catch(() => this.set({ error: "The browser blocked playback. Try again." }));
+  }
+
   clearError(): void {
     if (this.state.error) this.set({ error: "" });
   }
@@ -519,7 +554,7 @@ export class Player {
       if (sp.mode === "skip") continue;
       for (const seg of segmentsOf(line.text)) {
         if (seg.kind !== "speech") continue;
-        const spoken = applyDict(seg.text, this.ctx.prefs.dict);
+        const spoken = applyDict(seg.text, this.ctx.prefs.dict, this.ctx.script.lang);
         const prompt = script.engine === "gemini" ? sp.prompt.trim() : "";
         const url = this.clips.get(clipKey(script, sp.voice, prompt, spoken));
         if (!url) return null;
