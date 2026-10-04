@@ -5,7 +5,6 @@ import { api } from "../server/api";
 import { CLIPS, parseClipsRequest } from "../server/clips";
 import { readConfig, type Bindings } from "../server/config";
 import { clearTokenCache } from "../server/google/auth";
-import { cacheKey } from "../server/lib/cache";
 import { baseEnv, fakeExecutionContext, fakeKv, fakeR2, fakeRateLimiter, makeServiceAccount, stubFetch } from "./helpers";
 
 let serviceAccountJson: string;
@@ -207,35 +206,76 @@ describe("POST /v1/clips: making clips", () => {
     expect(await bytes(await play(body.items[0].url!, env))).toBe("audio-1audio-2");
   });
 
-  it("reuses a line the reader already synthesized", async () => {
-    const fetches = stubFetch();
-    const { env, kv } = setup();
-    const key = await cacheKey({
-      engine: "chirp3-hd",
-      language: "fr-FR",
-      voice: "Charon",
-      format: "mp3",
-      payload: { kind: "text", text: "Déjà fait." },
-    });
-    await kv.kv.put(key, new TextEncoder().encode("from-cache"), { metadata: { chunks: 1, characters: 10 } });
-
-    const body = (await (await create({ items: [{ text: "Déjà fait." }] }, env)).json()) as Body;
-    expect(fetches.ttsCalls()).toHaveLength(0);
-    expect(await bytes(await play(body.items[0].url!, env))).toBe("from-cache");
-  });
-
-  it("stops at the per-request budget and finishes on the next call", async () => {
+  it("splits a long sentence into chunks Google accepts, and joins the audio", async () => {
     const fetches = stubFetch();
     const { env } = setup();
-    const items = Array.from({ length: CLIPS.maxSynthesisCalls + 5 }, (_, i) => ({ ref: `s${i}`, text: `Phrase ${i}.` }));
+    const long = "Une phrase assez longue pour remplir la page. ".repeat(100).trim(); // 4,599 bytes: two chunks
+    const body = (await (await create({ items: [{ text: long }] }, env)).json()) as Body;
+    expect(fetches.ttsCalls()).toHaveLength(2);
+    expect(await bytes(await play(body.items[0].url!, env))).toBe("audio-1audio-2");
+  });
 
-    const first = (await (await create({ items }, env)).json()) as Body;
-    expect(first).toMatchObject({ complete: false, pending: 5 });
-    expect(fetches.ttsCalls()).toHaveLength(CLIPS.maxSynthesisCalls);
+  it("refuses a dialogue too long for one request, by item, instead of failing everything", async () => {
+    stubFetch();
+    const { env } = setup();
+    const turns = Array.from({ length: 60 }, (_, i) => ({ text: `Réplique ${i}.` }));
+    const body = (await (await create({ items: [{ ref: "ok", text: "Bonjour." }, { ref: "long", turns }] }, env)).json()) as Body;
+    expect(body.items.map((i) => [i.ref, i.status, i.error?.code])).toEqual([
+      ["ok", "ready", undefined],
+      ["long", "failed", "too_many_parts"],
+    ]);
+  });
+});
 
-    const second = (await (await create({ items }, env)).json()) as Body;
-    expect(second).toMatchObject({ complete: true, pending: 0 });
-    expect(fetches.ttsCalls()).toHaveLength(CLIPS.maxSynthesisCalls + 5);
+describe("POST /v1/clips: staying within the Workers subrequest limit", () => {
+  /** Google calls plus every KV and R2 operation: what the platform counts, 50 at most on the free plan. */
+  const subrequests = (fetches: ReturnType<typeof stubFetch>, s: ReturnType<typeof setup>) =>
+    fetches.calls.length + s.kv.ops.count + s.r2.ops.count;
+
+  /** What the guide's build scripts do: send again only what is not ready yet. */
+  async function buildAll(items: { ref: string; text: string }[], s: ReturnType<typeof setup>) {
+    const urls = new Map<string, string>();
+    let rounds = 0;
+    let left = items;
+    while (left.length) {
+      const fetches = stubFetch();
+      const before = { kv: s.kv.ops.count, r2: s.r2.ops.count };
+      const ctx = fakeExecutionContext();
+      const body = (await (await create({ items: left }, s.env, KEY, ctx.ctx)).json()) as Body;
+      await ctx.settle();
+      const used = fetches.calls.length + (s.kv.ops.count - before.kv) + (s.r2.ops.count - before.r2);
+      expect(used).toBeLessThanOrEqual(50);
+      for (const item of body.items) if (item.url) urls.set(item.ref!, item.url);
+      left = left.filter((item) => !urls.has(item.ref));
+      expect(++rounds).toBeLessThan(20);
+    }
+    return { urls, rounds };
+  }
+
+  it("makes 100 new clips in several requests, none over 50 subrequests", async () => {
+    const s = setup();
+    const items = Array.from({ length: 100 }, (_, i) => ({ ref: `s${i}`, text: `Phrase numéro ${i}.` }));
+    const { urls, rounds } = await buildAll(items, s);
+    expect(urls.size).toBe(100);
+    expect(rounds).toBeGreaterThan(1);
+  });
+
+  it("confirms 100 existing clips cheaply", async () => {
+    const s = setup();
+    const items = Array.from({ length: 100 }, (_, i) => ({ ref: `s${i}`, text: `Phrase numéro ${i}.` }));
+    await buildAll(items, s);
+    const again = await buildAll(items, s);
+    expect(again.urls.size).toBe(100);
+    expect(again.rounds).toBeLessThanOrEqual(3); // existence checks cost 1 each, not a synthesis
+  });
+
+  it("counts the per-request work the way the platform does", async () => {
+    const fetches = stubFetch();
+    const s = setup();
+    const ctx = fakeExecutionContext();
+    await create({ items: Array.from({ length: 30 }, (_, i) => ({ text: `Ligne ${i}.` })) }, s.env, KEY, ctx.ctx);
+    await ctx.settle();
+    expect(subrequests(fetches, s)).toBeLessThanOrEqual(50);
   });
 });
 
@@ -336,7 +376,9 @@ describe("the guide for AI agents", () => {
 
   it("states the limits the code enforces", () => {
     expect(clipsGuide).toContain(`1 to ${CLIPS.maxItems} clips`);
-    expect(clipsGuide).toContain(`about ${CLIPS.maxSynthesisCalls} new clips`);
+    // Read as prose: line wrapping and emphasis are not part of the wording.
+    const prose = clipsGuide.replace(/\*\*/g, "").replace(/\s+/g, " ");
+    expect(prose).toMatch(/send again only the items that are not ready/i);
   });
 });
 

@@ -77,21 +77,25 @@ export function stubFetch(overrides: { tts?: Handler; token?: Handler; turnstile
 /** Minimal in-memory stand-in for a KV namespace (only the methods the cache and quotas use). */
 export function fakeKv() {
   const store = new Map<string, { value: ArrayBuffer; metadata: unknown; ttl?: number }>();
+  const ops = { count: 0 };
   const kv = {
     async get(key: string) {
+      ops.count++;
       const entry = store.get(key);
       return entry ? new TextDecoder().decode(entry.value) : null;
     },
     async getWithMetadata(key: string) {
+      ops.count++;
       const entry = store.get(key);
       return { value: entry?.value ?? null, metadata: entry?.metadata ?? null };
     },
     async put(key: string, value: Uint8Array | string, options: { expirationTtl?: number; metadata?: unknown } = {}) {
+      ops.count++;
       const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
       store.set(key, { value: bytes.slice().buffer, metadata: options.metadata, ttl: options.expirationTtl });
     },
   };
-  return { kv: kv as unknown as KVNamespace, store };
+  return { kv: kv as unknown as KVNamespace, store, ops };
 }
 
 export function fakeRateLimiter(allow: boolean) {
@@ -142,6 +146,7 @@ interface StoredObject {
  */
 export function fakeR2() {
   const store = new Map<string, StoredObject>();
+  const ops = { count: 0 };
   let version = 0;
 
   const describe = (key: string, object: StoredObject) => ({
@@ -159,10 +164,12 @@ export function fakeR2() {
 
   const bucket = {
     async head(key: string) {
+      ops.count++;
       const object = store.get(key);
       return object ? describe(key, object) : null;
     },
     async put(key: string, value: Uint8Array, options: Partial<Pick<StoredObject, "httpMetadata" | "customMetadata">> = {}) {
+      ops.count++;
       store.set(key, {
         bytes: new Uint8Array(value),
         httpMetadata: options.httpMetadata ?? {},
@@ -172,6 +179,7 @@ export function fakeR2() {
       return describe(key, store.get(key)!);
     },
     async get(key: string, options: { range?: Headers; onlyIf?: Headers } = {}) {
+      ops.count++;
       const object = store.get(key);
       if (!object) return null;
       const meta = describe(key, object);
@@ -190,5 +198,5 @@ export function fakeR2() {
       };
     },
   };
-  return { bucket: bucket as unknown as R2Bucket, store };
+  return { bucket: bucket as unknown as R2Bucket, store, ops };
 }

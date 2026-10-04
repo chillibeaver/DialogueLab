@@ -147,3 +147,28 @@ function concatWav(parts: Bytes[]): Bytes {
 
   return concatBytes([header, ...parsed.map((p) => p.data)]);
 }
+
+/**
+ * Silence in the same MPEG format as `clip` (version, bitrate, sample rate,
+ * channels), so it can be joined to it: whole frames with zeroed side
+ * information, which decoders play as silence. Used to put real pauses into an
+ * exported script. Returns no bytes when `clip` has no recognisable frame.
+ */
+export function mp3Silence(clip: Bytes, ms: number): Bytes {
+  const audio = stripMp3Headers(clip);
+  const length = mp3FrameLength(audio, 0);
+  if (!length || ms <= 0) return new Uint8Array(0);
+
+  const [, b1, b2, b3] = audio;
+  const version = (b1 >> 3) & 0x03;
+  const sampleRate = MP3_SAMPLE_RATES[version][(b2 >> 2) & 0x03];
+  const samplesPerFrame = version === 3 ? 1152 : 576;
+  const frameLength = length - ((b2 >> 1) & 0x01);
+  // No CRC (its checksum would not match zeroed data), and no padding byte.
+  const header = [0xff, b1 | 0x01, b2 & ~0x02, b3];
+
+  const frames = Math.ceil(((ms / 1000) * sampleRate) / samplesPerFrame);
+  const out = new Uint8Array(frames * frameLength);
+  for (let frame = 0; frame < frames; frame++) out.set(header, frame * frameLength);
+  return out;
+}

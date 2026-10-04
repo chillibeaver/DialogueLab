@@ -19,7 +19,10 @@
 		// How long synthesized audio stays in the KV cache (30 days).
 		"CACHE_TTL_SECONDS": "2592000",
 		// Characters each clips API key may send to Google per UTC day (about US$6 on Chirp 3: HD).
-		"API_DAILY_CHARS": "200000"
+		"API_DAILY_CHARS": "200000",
+		// Subrequests one request may make: Google calls and every KV or R2 operation.
+		// The Workers free plan allows 50; on a paid plan raise this to e.g. 9000.
+		"SUBREQUEST_BUDGET": "40"
 	},
 	// Secrets (set with `wrangler secret put`, or in .dev.vars locally):
 	//   GOOGLE_TTS_API_KEY           - API key, enough for Chirp 3: HD

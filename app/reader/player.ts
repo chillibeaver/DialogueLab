@@ -1,16 +1,20 @@
 /**
  * Playback engine.
  *
- * Audio is fetched from `POST /api/tts/batch` in as few requests as the limits
- * allow, because one request per line would exhaust the per-IP rate limit on
- * any real script. Clips are kept in memory for the session, so repeating,
- * looping and replaying cost nothing and are instant.
+ * Audio comes from `POST /api/tts/batch`. Only what is about to play is
+ * fetched: the line the listener starts on jumps the queue, and continuous
+ * playback keeps a dozen lines ahead, in batches, so playing one line never
+ * pays for the whole script and a long script never sends one request per
+ * line. The server does as much as its per-request budget allows and returns
+ * the rest as pending, which simply goes back on the queue. Clips stay in
+ * memory for the session, so repeating, looping and replaying are free.
  *
  * Speed and volume are applied to the audio element rather than sent to
  * Google: changing them never re-synthesizes, so it is free and immediate, and
  * every clip stays cache-identical however the listener sets them.
  */
 
+import { mp3Silence, stripMp3Headers } from "../../server/lib/audio";
 import { effectiveRate, speakerOf, type Prefs, type Script, type Speaker } from "./model";
 import { applyDict, segmentsOf, type Segment } from "./text";
 
@@ -24,7 +28,7 @@ export interface PlayerState {
   range: [number, number] | null;
   /** A deliberate silence the listener should see a countdown for. */
   waiting: { kind: "shadow"; ms: number; at: number } | null;
-  /** Clips still to fetch, so the UI can show progress on first play. */
+  /** Clips still to fetch, so the UI can show progress while it waits. */
   pending: number;
   error: string;
 }
@@ -54,9 +58,14 @@ interface ClipRequest {
 }
 
 interface BatchResponseItem {
-  audio: string;
-  characters: number;
-  cache: "HIT" | "MISS";
+  status: "ready" | "pending";
+  audio?: string;
+}
+
+class RateLimited extends Error {
+  constructor(readonly seconds: number) {
+    super(`Rate limited for ${seconds} s`);
+  }
 }
 
 /** One silent frame, played on the user's click so later programmatic plays are allowed. */
@@ -66,9 +75,24 @@ const SILENCE =
   "////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAA" +
   "JAAAAAAAAAAAAnGMHkkIAAAAAAAAAAAAAAAAAAAA";
 
+/** Lines continuous playback keeps ready ahead of the one playing. */
+const AHEAD = 12;
+
+/**
+ * Lines per request. The server only works through what its per-request
+ * budget allows and returns the rest as pending, so sending far more than it
+ * can do in one go only wastes the upload.
+ */
+const MAX_GROUP = 40;
+
+/** Rate-limit waits before giving up, so a stuck server cannot hold playback forever. */
+const MAX_RATE_LIMIT_WAITS = 3;
+
 function clipKey(script: Script, voice: string, prompt: string, spoken: string): string {
   return JSON.stringify([script.engine, script.lang, script.engine === "gemini" ? script.model : "", voice, prompt, spoken]);
 }
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class Player {
   private ctx: Context;
@@ -76,8 +100,16 @@ export class Player {
   private state: PlayerState = { ...IDLE_STATE };
 
   private audio: HTMLAudioElement | null = null;
+  /** Fetched clips, as object URLs, by key. */
   private clips = new Map<string, string>();
-  private inflight = new Map<string, Promise<void>>();
+
+  /** Clips waiting to be fetched, most urgent first. */
+  private queue: ClipRequest[] = [];
+  /** Keys in a request that has not answered yet. */
+  private inflight = new Set<string>();
+  /** Callers waiting for a clip, by key. */
+  private waiters = new Map<string, { resolve: () => void; reject: (error: Error) => void }[]>();
+  private pumping = false;
 
   /** Bumped on every interruption; stale callbacks compare against it and stop. */
   private token = 0;
@@ -90,12 +122,15 @@ export class Player {
   private segIndex = 0;
   private repeat = 0;
   private single = false;
+  private passStarted = 0;
 
   constructor(ctx: Context) {
     this.ctx = ctx;
   }
 
   update(ctx: Context): void {
+    // Another script was opened: what was queued for the old one is no longer wanted.
+    if (ctx.script.id !== this.ctx.script.id) this.cancelQueue();
     this.ctx = ctx;
     // Speed changes take effect on the clip already playing.
     if (this.audio && this.lineIndex >= 0) {
@@ -121,6 +156,7 @@ export class Player {
 
   dispose(): void {
     this.halt();
+    this.cancelQueue();
     for (const url of this.clips.values()) URL.revokeObjectURL(url);
     this.clips.clear();
     this.listeners.clear();
@@ -153,49 +189,165 @@ export class Player {
     this.audio.volume = Math.min(1, Math.max(0, sp.volume ?? 1));
   }
 
-  /* ---------- fetching ---------- */
+  /* ---------- what to fetch ---------- */
 
-  /** Every clip the script needs, in playback order and without duplicates. */
-  private requestsFor(script: Script): ClipRequest[] {
+  /** The clip for one piece of a line, in its speaker's voice, with the dictionary applied. */
+  private request(sp: Speaker, text: string): ClipRequest {
+    const script = this.ctx.script;
+    const spoken = applyDict(text, this.ctx.prefs.dict, script.lang);
+    const prompt = script.engine === "gemini" ? sp.prompt.trim() : "";
+    return { key: clipKey(script, sp.voice, prompt, spoken), text: spoken, voice: sp.voice, prompt: prompt || undefined };
+  }
+
+  /** Every clip the given lines need, in order and without duplicates. */
+  private requestsFor(indexes: number[]): ClipRequest[] {
+    const script = this.ctx.script;
     const seen = new Set<string>();
     const out: ClipRequest[] = [];
-    for (const line of script.lines) {
+    for (const index of indexes) {
+      const line = script.lines[index];
+      if (!line) continue;
       const sp = speakerOf(script, line.sp);
-      if (sp.mode === "skip") continue;
       for (const seg of segmentsOf(line.text)) {
         if (seg.kind !== "speech") continue;
-        const spoken = applyDict(seg.text, this.ctx.prefs.dict, this.ctx.script.lang);
-        const prompt = script.engine === "gemini" ? sp.prompt.trim() : "";
-        const key = clipKey(script, sp.voice, prompt, spoken);
-        if (seen.has(key) || this.clips.has(key)) continue;
-        seen.add(key);
-        out.push({ key, text: spoken, voice: sp.voice, prompt: prompt || undefined });
+        const request = this.request(sp, seg.text);
+        if (seen.has(request.key)) continue;
+        seen.add(request.key);
+        out.push(request);
       }
     }
     return out;
   }
 
-  /** Splits into requests that each fit the server's batch limits. */
-  private groupRequests(requests: ClipRequest[]): ClipRequest[][] {
-    const groups: ClipRequest[][] = [];
-    let group: ClipRequest[] = [];
-    let chars = 0;
-    for (const request of requests) {
-      const length = [...request.text].length;
-      const { maxItems, maxChars } = this.ctx.limits;
-      if (group.length >= maxItems || (group.length > 0 && chars + length > maxChars)) {
-        groups.push(group);
-        group = [];
-        chars = 0;
-      }
-      group.push(request);
-      chars += length;
-    }
-    if (group.length) groups.push(group);
-    return groups;
+  private playableLines(): number[] {
+    const script = this.ctx.script;
+    return script.lines.map((_, i) => i).filter((i) => speakerOf(script, script.lines[i].sp).mode !== "skip");
   }
 
-  private async fetchGroup(group: ClipRequest[]): Promise<void> {
+  /** The playable lines after `index`, in playback order, wrapping round when looping. */
+  private upcoming(index: number, count: number): number[] {
+    const out: number[] = [];
+    let at = index;
+    while (out.length < count) {
+      let next = this.playableFrom(at, 1, false);
+      if (next < 0 && this.ctx.prefs.loop) next = this.playableFrom(0, 1, true);
+      if (next < 0 || out.includes(next) || next === index) break;
+      out.push(next);
+      at = next;
+    }
+    return out;
+  }
+
+  /**
+   * Keeps the next lines coming while one plays. It tops up only when fewer
+   * than half the window is ready, so lines are fetched in batches rather than
+   * one request per line, which would exhaust the rate limit.
+   */
+  private prefetchAfter(index: number): void {
+    const ahead = this.upcoming(index, AHEAD);
+    let ready = 0;
+    for (const line of ahead) {
+      if (!this.requestsFor([line]).every((r) => this.clips.has(r.key))) break;
+      ready++;
+    }
+    if (ready >= AHEAD / 2) return;
+    void this.need(this.requestsFor(ahead), false).catch(() => {
+      // Reported when one of these lines is actually reached.
+    });
+  }
+
+  /* ---------- fetching ---------- */
+
+  /**
+   * Resolves once every clip in `requests` is available. Urgent requests (the
+   * line about to play) jump the queue; the others take their turn.
+   */
+  private need(requests: ClipRequest[], urgent: boolean): Promise<void> {
+    const missing = requests.filter((r) => !this.clips.has(r.key));
+    if (!missing.length) return Promise.resolve();
+
+    const promises = missing.map(
+      (r) =>
+        new Promise<void>((resolve, reject) => {
+          const list = this.waiters.get(r.key) ?? [];
+          list.push({ resolve, reject });
+          this.waiters.set(r.key, list);
+        }),
+    );
+    const toQueue = missing.filter((r) => !this.inflight.has(r.key));
+    const keys = new Set(toQueue.map((r) => r.key));
+    const rest = this.queue.filter((r) => !keys.has(r.key));
+    this.queue = urgent ? [...toQueue, ...rest] : [...rest, ...toQueue];
+    this.set({ pending: this.queue.length + this.inflight.size });
+    void this.pump();
+    return Promise.all(promises).then(() => undefined);
+  }
+
+  private settle(key: string, error?: Error): void {
+    for (const waiter of this.waiters.get(key) ?? []) {
+      if (error) waiter.reject(error);
+      else waiter.resolve();
+    }
+    this.waiters.delete(key);
+  }
+
+  private cancelQueue(): void {
+    const cancelled = new Error("Cancelled");
+    for (const r of this.queue) this.settle(r.key, cancelled);
+    this.queue = [];
+  }
+
+  private takeGroup(): ClipRequest[] {
+    const { maxItems, maxChars } = this.ctx.limits;
+    const group: ClipRequest[] = [];
+    let chars = 0;
+    while (this.queue.length && group.length < Math.min(maxItems, MAX_GROUP)) {
+      const length = [...this.queue[0].text].length;
+      if (group.length && chars + length > maxChars) break;
+      group.push(this.queue.shift()!);
+      chars += length;
+    }
+    return group;
+  }
+
+  /** Sends the queue in batches until it is empty. One pump runs at a time. */
+  private async pump(): Promise<void> {
+    if (this.pumping) return;
+    this.pumping = true;
+    let waits = 0;
+    try {
+      while (this.queue.length) {
+        const group = this.takeGroup();
+        for (const r of group) this.inflight.add(r.key);
+        try {
+          const pending = await this.fetchGroup(group);
+          // What the server did not get to this time goes back first, in order.
+          const back = new Set(pending.map((r) => r.key));
+          this.queue = [...pending, ...this.queue.filter((r) => !back.has(r.key))];
+          waits = 0;
+        } catch (caught) {
+          if (caught instanceof RateLimited && waits < MAX_RATE_LIMIT_WAITS) {
+            waits++;
+            this.set({ error: `The server is busy; trying again in ${caught.seconds} s.` });
+            this.queue = [...group, ...this.queue];
+            await sleep(caught.seconds * 1000);
+            this.set({ error: "" });
+            continue;
+          }
+          const error = caught instanceof Error ? caught : new Error("Synthesis failed.");
+          for (const r of group) this.settle(r.key, error);
+        } finally {
+          for (const r of group) this.inflight.delete(r.key);
+          this.set({ pending: this.queue.length + this.inflight.size });
+        }
+      }
+    } finally {
+      this.pumping = false;
+    }
+  }
+
+  /** One batch request. Stores what came back ready and returns what is still pending. */
+  private async fetchGroup(group: ClipRequest[]): Promise<ClipRequest[]> {
     const script = this.ctx.script;
     const headers: Record<string, string> = { "content-type": "application/json" };
     const token = await this.ctx.turnstileToken();
@@ -218,61 +370,28 @@ export class Player {
     });
 
     if (!response.ok) {
-      const problem = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+      const problem = (await response.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+      if (response.status === 429 && problem?.error?.code === "rate_limited") {
+        throw new RateLimited(Number(response.headers.get("retry-after")) || 60);
+      }
       throw new Error(problem?.error?.message ?? `Synthesis failed with status ${response.status}.`);
     }
 
     const body = (await response.json()) as { contentType: string; items: BatchResponseItem[] };
+    const pending: ClipRequest[] = [];
     body.items.forEach((item, index) => {
-      const bytes = Uint8Array.from(atob(item.audio), (ch) => ch.charCodeAt(0));
-      const url = URL.createObjectURL(new Blob([bytes], { type: body.contentType }));
-      this.clips.set(group[index].key, url);
-    });
-  }
-
-  /**
-   * Fetches the first group before returning so playback can start, then keeps
-   * fetching the rest in the background while the opening lines play.
-   */
-  private async prepare(): Promise<void> {
-    const groups = this.groupRequests(this.requestsFor(this.ctx.script));
-    if (!groups.length) return;
-
-    this.set({ status: "loading", pending: groups.reduce((n, g) => n + g.length, 0), error: "" });
-    const first = groups.shift()!;
-    await this.run(first);
-
-    void (async () => {
-      for (const group of groups) {
-        try {
-          await this.run(group);
-        } catch {
-          // Reported when a clip is actually needed; earlier lines still play.
-        }
+      const request = group[index];
+      if (item.status !== "ready" || !item.audio) {
+        pending.push(request);
+        return;
       }
-    })();
-  }
-
-  private run(group: ClipRequest[]): Promise<void> {
-    const key = group.map((r) => r.key).join("|");
-    const existing = this.inflight.get(key);
-    if (existing) return existing;
-    const promise = this.fetchGroup(group)
-      .then(() => {
-        this.set({ pending: Math.max(0, this.state.pending - group.length) });
-      })
-      .finally(() => this.inflight.delete(key));
-    this.inflight.set(key, promise);
-    return promise;
-  }
-
-  /** Waits for a clip that a later background group is still fetching. */
-  private async clipFor(key: string): Promise<string | null> {
-    if (this.clips.has(key)) return this.clips.get(key)!;
-    const waits = [...this.inflight.values()];
-    if (!waits.length) return null;
-    await Promise.allSettled(waits);
-    return this.clips.get(key) ?? null;
+      const bytes = Uint8Array.from(atob(item.audio), (ch) => ch.charCodeAt(0));
+      this.clips.set(request.key, URL.createObjectURL(new Blob([bytes], { type: body.contentType })));
+      this.settle(request.key);
+    });
+    // The server always finishes at least one item; if not, stop rather than ask forever.
+    if (pending.length === group.length) throw new Error("The server returned no audio. Try again later.");
+    return pending;
   }
 
   /* ---------- transport ---------- */
@@ -333,12 +452,13 @@ export class Player {
     this.single = single;
     this.set({ status: "loading", error: "" });
 
+    // Only the line playback starts on: playing one line must not pay for the rest.
     const token = this.token;
     try {
-      await this.prepare();
+      await this.need(this.requestsFor([index]), true);
     } catch (caught) {
       if (token !== this.token) return;
-      this.set({ status: "idle", pending: 0, error: caught instanceof Error ? caught.message : "Synthesis failed." });
+      this.set({ status: "idle", error: caught instanceof Error ? caught.message : "Synthesis failed." });
       return;
     }
     if (token !== this.token) return;
@@ -353,6 +473,7 @@ export class Player {
     const line = this.ctx.script.lines[index];
     if (!line) return this.finish(false);
     this.set({ line: index, range: null });
+    if (!this.single) this.prefetchAfter(index);
     void this.beginPass();
   }
 
@@ -364,8 +485,6 @@ export class Player {
     this.passStarted = Date.now();
     void this.nextSegment();
   }
-
-  private passStarted = 0;
 
   private async nextSegment(): Promise<void> {
     if (this.state.status !== "playing") return;
@@ -383,24 +502,30 @@ export class Player {
     const script = this.ctx.script;
     const line = script.lines[this.lineIndex];
     const sp = speakerOf(script, line.sp);
-    const spoken = applyDict(segment.text, this.ctx.prefs.dict, this.ctx.script.lang);
-    const prompt = script.engine === "gemini" ? sp.prompt.trim() : "";
-    const key = clipKey(script, sp.voice, prompt, spoken);
-
+    const request = this.request(sp, segment.text);
     this.set({ range: [segment.start, segment.end] });
 
     const token = this.token;
-    const url = await this.clipFor(key);
-    if (token !== this.token || this.state.status !== "playing") return;
-    if (!url) {
-      this.set({ status: "idle", error: "Some audio could not be loaded. Press play to try again." });
-      return;
+    if (!this.clips.has(request.key)) {
+      // Not prefetched yet (an edit, a jump, a slow server): wait for it.
+      this.set({ status: "loading" });
+      try {
+        await this.need([request], true);
+      } catch (caught) {
+        if (token === this.token) {
+          this.set({ status: "idle", error: caught instanceof Error ? caught.message : "Some audio could not be loaded." });
+        }
+        return;
+      }
+      if (token !== this.token) return;
+      this.set({ status: "playing" });
     }
+    if (token !== this.token || this.state.status !== "playing") return;
 
     const audio = this.audio ?? (this.audio = new Audio());
     audio.onended = null;
     audio.onerror = null;
-    audio.src = url;
+    audio.src = this.clips.get(request.key)!;
     this.applyVoiceSettings(sp);
 
     audio.onended = () => {
@@ -472,7 +597,7 @@ export class Player {
     this.unlock();
     if (this.state.status === "playing") this.pause();
     else if (this.state.status === "paused") this.resume();
-    else void this.play(this.lineIndex >= 0 ? this.lineIndex : 0);
+    else if (this.state.status === "idle") void this.play(this.lineIndex >= 0 ? this.lineIndex : 0);
   }
 
   stop(): void {
@@ -509,28 +634,27 @@ export class Player {
   async say(text: string, sp: Speaker): Promise<void> {
     this.unlock();
     this.halt();
-    const script = this.ctx.script;
-    const spoken = applyDict(text, this.ctx.prefs.dict, script.lang).trim();
-    if (!spoken) return;
-    const prompt = script.engine === "gemini" ? sp.prompt.trim() : "";
-    const key = clipKey(script, sp.voice, prompt, spoken);
+    const request = this.request(sp, text);
+    if (!request.text.trim()) return;
 
     this.set({ status: "loading", error: "" });
     const token = this.token;
     try {
-      if (!this.clips.has(key)) await this.run([{ key, text: spoken, voice: sp.voice, prompt: prompt || undefined }]);
+      await this.need([request], true);
     } catch (caught) {
-      this.set({ status: "idle", error: caught instanceof Error ? caught.message : "Synthesis failed." });
+      if (token === this.token) {
+        this.set({ status: "idle", error: caught instanceof Error ? caught.message : "Synthesis failed." });
+      }
       return;
     }
     // Playback started meanwhile owns the status now; leave it alone.
     if (token !== this.token) return;
-    this.set({ status: "idle", pending: 0 });
+    this.set({ status: "idle" });
 
     const audio = this.audio!;
     audio.onended = null;
     audio.onerror = null;
-    audio.src = this.clips.get(key)!;
+    audio.src = this.clips.get(request.key)!;
     this.applyVoiceSettings(sp);
     await audio.play().catch(() => this.set({ error: "The browser blocked playback. Try again." }));
   }
@@ -539,29 +663,34 @@ export class Player {
     if (this.state.error) this.set({ error: "" });
   }
 
-  /** Clips for the whole script, in order, for the audio export. */
-  async collectClips(): Promise<Blob[] | null> {
-    try {
-      await this.prepare();
-      await Promise.allSettled([...this.inflight.values()]);
-    } catch {
-      return null;
-    }
+  /**
+   * The whole script as one MP3, skipped speakers left out, with real silence
+   * for pause markers and for the gap between lines. Each clip's leading tag
+   * and header frame are dropped, or players would take the first clip's
+   * header as the duration of the whole file.
+   */
+  async exportAudio(): Promise<Blob> {
     const script = this.ctx.script;
-    const out: Blob[] = [];
-    for (const line of script.lines) {
-      const sp = speakerOf(script, line.sp);
-      if (sp.mode === "skip") continue;
-      for (const seg of segmentsOf(line.text)) {
-        if (seg.kind !== "speech") continue;
-        const spoken = applyDict(seg.text, this.ctx.prefs.dict, this.ctx.script.lang);
-        const prompt = script.engine === "gemini" ? sp.prompt.trim() : "";
-        const url = this.clips.get(clipKey(script, sp.voice, prompt, spoken));
-        if (!url) return null;
-        out.push(await (await fetch(url)).blob());
+    const lines = this.playableLines();
+    const requests = this.requestsFor(lines);
+    await this.need(requests, true);
+
+    const bytes = new Map<string, Uint8Array<ArrayBuffer>>();
+    for (const r of requests) {
+      bytes.set(r.key, new Uint8Array(await (await fetch(this.clips.get(r.key)!)).arrayBuffer()));
+    }
+    // Silence is made in the clips' own MPEG format, so that it joins cleanly.
+    const sample = bytes.values().next().value;
+    const silence = (ms: number) => (sample ? mp3Silence(sample, ms) : new Uint8Array(0));
+
+    const parts: Uint8Array<ArrayBuffer>[] = [];
+    for (const [k, index] of lines.entries()) {
+      if (k > 0) parts.push(silence(this.ctx.prefs.gap * 1000));
+      const sp = speakerOf(script, script.lines[index].sp);
+      for (const seg of segmentsOf(script.lines[index].text)) {
+        parts.push(seg.kind === "pause" ? silence(seg.ms) : stripMp3Headers(bytes.get(this.request(sp, seg.text).key)!));
       }
     }
-    this.set({ status: this.state.status === "loading" ? "idle" : this.state.status, pending: 0 });
-    return out;
+    return new Blob(parts, { type: "audio/mpeg" });
   }
 }

@@ -36,6 +36,10 @@ Authorization: Bearer <TTS_STUDIO_KEY>
 
 Only `POST /api/v1/clips` needs it. Clip URLs are public.
 
+Keys are issued by whoever runs this TTS Studio site, one per collaborator. If
+`TTS_STUDIO_KEY` is not set, ask the human to get one from them. Never invent a
+key, and never write one into a file you deliver.
+
 ## Making clips
 
 `POST https://tts.example.com/api/v1/clips` with a JSON body:
@@ -111,9 +115,12 @@ several requests.
   request again) or `failed` (has an `error`; send the same request again later).
 - `created: false` means the clip already existed and nothing was billed.
 - `synthesized` is the number of characters billed by this call.
-- One request makes at most about 40 new clips; the rest come back `pending`.
-  **Repeat the identical request until `complete` is `true`.** Clips already
-  made are skipped for free.
+- Each request does only as much as the server allows per request: on
+  Cloudflare's free plan, roughly 10 new clips, or about 30 that already exist.
+  The rest come back `pending`. **Send again only the items that are not
+  ready**, until none are left; the build scripts below do this. Do not resend
+  items that are already ready: checking them again uses up the next request's
+  allowance, and a large set would stop making progress.
 
 ## Playing clips in the page
 
@@ -156,12 +163,16 @@ sentence itself to a function such as `parler(texte)`. Convert them like this:
 
 1. **Collect every string the page can speak** from its data: each sentence,
    each worked example, each line of each document.
-2. **Use the text itself as the `ref`.** The build script then returns a map
+2. **Use the text itself as the `ref`**, exactly as the page's data holds it. The build script then returns a map
    from sentence to URL, which is exactly what the page looks things up by.
    When one page has several voices, use `"Voice|text"` as the `ref` instead
    (for example `"Kore|Bonjour !"`), so that the same words in two voices do
    not collide.
-3. **Write the map into the page** and replace the speech call:
+3. **Look clips up by the same string you sent**, never by the text as
+   displayed. Pages often reformat text for display (a non-breaking space
+   before `?` and `!`, curly apostrophes); a key taken from the displayed text
+   will not match. Keep the raw string next to whatever displays it.
+4. **Write the map into the page** and replace the speech call:
 
 ```js
 // Written by the build step: every sentence the page can say, and its clip.
@@ -194,7 +205,7 @@ function parler(texte, lent) {
 }
 ```
 
-4. **Remove the browser voice picker.** Voices are chosen at build time, so
+5. **Remove the browser voice picker.** Voices are chosen at build time, so
    it no longer does anything. Offering a choice would mean making every clip
    once per voice, multiplying the cost.
 
@@ -249,7 +260,12 @@ that, every play is free.
 ## A complete build script
 
 Node 18 or later, no dependencies. Input: a JSON file in the request format
-above (any number of items). Output: a JSON map from `ref` to URL.
+above, with any number of items, each with its own `ref`. Output: a JSON map
+from `ref` to URL. Progress goes to the terminal; the map goes to the file.
+
+If you cannot make HTTP requests yourself (in a chat without tools, for
+example), write the items file and this script, ask the human to run it, and use
+the map it produces.
 
 ```js
 // make-clips.mjs — usage: TTS_STUDIO_KEY=… node make-clips.mjs items.json > audio-map.json
@@ -259,30 +275,35 @@ const API = "https://tts.example.com/api/v1/clips";
 const key = process.env.TTS_STUDIO_KEY;
 if (!key) throw new Error("Set TTS_STUDIO_KEY to the API key.");
 
-const request = JSON.parse(await readFile(process.argv[2], "utf8"));
+const { items, ...shared } = JSON.parse(await readFile(process.argv[2], "utf8"));
+if (items.some((item) => !item.ref)) throw new Error("Every item needs a ref.");
 const urls = {};
+let left = items;
 
-for (let start = 0; start < request.items.length; start += 100) {
-  const batch = { ...request, items: request.items.slice(start, start + 100) };
-  for (let round = 1; ; round++) {
-    const response = await fetch(API, {
-      method: "POST",
-      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify(batch),
-    });
-    const body = await response.json();
+for (let round = 1; left.length; round++) {
+  if (round > 60) throw new Error(`${left.length} clips are still pending.`);
+  const response = await fetch(API, {
+    method: "POST",
+    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+    body: JSON.stringify({ ...shared, items: left.slice(0, 100) }),
+  });
+  const body = await response.json();
 
-    if (response.status === 429 && body.error.code === "rate_limited") {
-      const seconds = Number(response.headers.get("retry-after")) || 60;
-      await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
-      continue;
-    }
-    if (!response.ok) throw new Error(`${body.error.code}: ${body.error.message}`);
-
-    for (const item of body.items) if (item.url) urls[item.ref] = item.url;
-    if (body.complete) break;
-    if (round >= 20) throw new Error("Clips are still pending after 20 rounds.");
+  if (response.status === 429 && body.error.code === "rate_limited") {
+    const seconds = Number(response.headers.get("retry-after")) || 60;
+    console.error(`Rate limited; waiting ${seconds} s…`);
+    await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+    continue;
   }
+  if (!response.ok) throw new Error(`${body.error.code}: ${body.error.message}`);
+
+  for (const item of body.items) {
+    if (item.status === "failed") throw new Error(`${item.ref}: ${item.error.code}: ${item.error.message}`);
+    if (item.status === "ready") urls[item.ref] = item.url;
+  }
+  // Send again only what is not ready yet.
+  left = left.filter((item) => !(item.ref in urls));
+  console.error(`${items.length - left.length} of ${items.length} ready`);
 }
 
 console.log(JSON.stringify(urls, null, 2));
@@ -297,10 +318,15 @@ import json, os, sys, time, urllib.error, urllib.request
 API = "https://tts.example.com/api/v1/clips"
 key = os.environ["TTS_STUDIO_KEY"]
 request = json.load(open(sys.argv[1], encoding="utf-8"))
+items = request.pop("items")
+if any("ref" not in item for item in items):
+    sys.exit("Every item needs a ref.")
 urls = {}
+left = items
 
 def call(batch):
-    req = urllib.request.Request(API, data=json.dumps(batch).encode(), method="POST", headers={
+    body = json.dumps({**request, "items": batch}).encode()
+    req = urllib.request.Request(API, data=body, method="POST", headers={
         "authorization": f"Bearer {key}", "content-type": "application/json"})
     try:
         with urllib.request.urlopen(req) as response:
@@ -308,23 +334,34 @@ def call(batch):
     except urllib.error.HTTPError as error:
         return error.code, json.load(error), error.headers
 
-for start in range(0, len(request["items"]), 100):
-    batch = {**request, "items": request["items"][start:start + 100]}
-    for round in range(1, 21):
-        status, body, headers = call(batch)
-        if status == 429 and body["error"]["code"] == "rate_limited":
-            time.sleep(int(headers.get("retry-after") or 60))
-            continue
-        if status != 200:
-            sys.exit(f'{body["error"]["code"]}: {body["error"]["message"]}')
-        urls.update({item["ref"]: item["url"] for item in body["items"] if "url" in item})
-        if body["complete"]:
-            break
-    else:
-        sys.exit("Clips are still pending after 20 rounds.")
+for round in range(1, 61):
+    if not left:
+        break
+    status, body, headers = call(left[:100])
+    if status == 429 and body["error"]["code"] == "rate_limited":
+        seconds = int(headers.get("retry-after") or 60)
+        print(f"Rate limited; waiting {seconds} s…", file=sys.stderr)
+        time.sleep(seconds)
+        continue
+    if status != 200:
+        sys.exit(f'{body["error"]["code"]}: {body["error"]["message"]}')
+    for item in body["items"]:
+        if item["status"] == "failed":
+            sys.exit(f'{item["ref"]}: {item["error"]["code"]}: {item["error"]["message"]}')
+        if item["status"] == "ready":
+            urls[item["ref"]] = item["url"]
+    # Send again only what is not ready yet.
+    left = [item for item in left if item["ref"] not in urls]
+    print(f"{len(items) - len(left)} of {len(items)} ready", file=sys.stderr)
+else:
+    sys.exit(f"{len(left)} clips are still pending.")
 
 print(json.dumps(urls, indent=2, ensure_ascii=False))
 ```
+
+A large set takes several requests and, past ten a minute, a pause for the rate
+limit: a few minutes for a few hundred new sentences. That happens once; later
+runs find the clips already made.
 
 ## Voices
 
@@ -361,6 +398,7 @@ Errors are JSON: `{ "error": { "code": "…", "message": "…" } }`.
 | 400 | `invalid_request`, `invalid_json`, `unknown_voice`, `unsupported_language` | Fix the request; the message names the item. |
 | 401 | `unauthorized` | The key is missing or wrong. Ask the human. |
 | 413 | `text_too_long`, `payload_too_large` | Split the text or the request. |
+| item `failed` | `too_many_parts` | A dialogue too long for one request. Split it into shorter `turns` items. |
 | 429 | `rate_limited` | Wait `Retry-After` seconds, then repeat the request. |
 | 429 | `quota_exceeded` | **Stop.** The key's daily character budget is spent; `details.resetsAt` says when it renews. Tell the human. |
 | 502, 503 | `upstream_*`, `engine_unavailable`, `clips_unavailable` | A service problem. Retry later, or tell the human. |
@@ -368,7 +406,8 @@ Errors are JSON: `{ "error": { "code": "…", "message": "…" } }`.
 ## Checklist
 
 - [ ] The key comes from `TTS_STUDIO_KEY` and appears in no delivered file.
-- [ ] All sentences went out in bulk, repeated until `complete` was `true`.
+- [ ] All sentences went out in bulk; only items not yet ready were sent again.
+- [ ] The page looks clips up by the raw strings that were sent, not the displayed text.
 - [ ] Every item has a `ref`, and the page uses the URLs those refs map to.
 - [ ] The page only plays URLs; it never calls `POST`.
 - [ ] Dialogue characters keep the same voice throughout.

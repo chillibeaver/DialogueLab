@@ -29,6 +29,8 @@ export interface Bindings {
   CACHE_TTL_SECONDS?: string;
   /** Characters each API key may send to Google per UTC day. */
   API_DAILY_CHARS?: string;
+  /** Subrequests (Google calls, KV and R2 operations) one request may make. */
+  SUBREQUEST_BUDGET?: string;
 
   // Bindings (optional so the API degrades gracefully when one is missing)
   TTS_RATE_LIMITER?: RateLimit;
@@ -44,6 +46,7 @@ export interface Config {
   googleEndpoint: string;
   cacheTtlSeconds: number;
   apiDailyChars: number;
+  subrequestBudget: number;
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
@@ -62,5 +65,7 @@ export function readConfig(env: Bindings): Config {
     cacheTtlSeconds: Math.max(60, positiveInt(env.CACHE_TTL_SECONDS, 2_592_000)),
     // About US$6 a day on Chirp 3: HD, US$30 per million characters.
     apiDailyChars: positiveInt(env.API_DAILY_CHARS, 200_000),
+    // The Workers free plan allows 50 per request; raise to ~9000 on a paid plan.
+    subrequestBudget: positiveInt(env.SUBREQUEST_BUDGET, 40),
   };
 }

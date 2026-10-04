@@ -88,10 +88,10 @@ with its own address filled in.
 - **Same input, same URL.** A clip's id hashes everything that shapes its
   sound, so asking again is free (`created: false`). A line the reader already
   synthesized is reused from the KV cache.
-- **Bounded.** One request makes at most 40 new clips, within the Workers
-  subrequest limit; the rest return `pending` and are finished by repeating the
-  request. Each key has a daily character budget (`API_DAILY_CHARS`) and its
-  own rate limit.
+- **Bounded.** Each request stays within a subrequest budget (see below); what
+  does not fit comes back `pending`, and the client sends those items again.
+  Each key has a daily character budget (`API_DAILY_CHARS`) and its own rate
+  limit.
 
 Clips live in R2 without expiry. Unlike the 30-day synthesis cache, a published
 exercise must keep working.
@@ -143,6 +143,22 @@ The response is JSON, with base64 audio per item:
 
 Every line is cached on its own, so **editing one line only re-bills that
 line**.
+
+A request only does as much as the subrequest budget allows. Lines it did not
+reach come back as `{ "status": "pending" }`, with `"complete": false`; send
+those again. The reader does this on its own.
+
+#### The subrequest budget
+
+On Workers, every call to Google and **every KV or R2 operation** counts as a
+subrequest, and the free plan allows 50 per request (10,000 on paid). A batch
+line can cost three (cache read, synthesis, cache write), so an unbounded batch
+fails on the free plan beyond about fifteen new lines. Both batch endpoints
+therefore spend at most `SUBREQUEST_BUDGET` (default 40) per request: they work
+in order, reserve the worst case per item, and let cache hits fund more items.
+They always finish at least one item, so a client that resends the pending ones
+cannot loop forever. On a paid plan, raise the budget and one request does
+everything.
 
 ### `POST /api/tts`
 
@@ -278,9 +294,8 @@ npx wrangler secret put GOOGLE_TTS_API_KEY
 npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
 
 # Clips API: storage for published clips, and one key per collaborator.
-# Generate each key with e.g. `openssl rand -hex 24`, then enter
-# "name:key,name2:key2" when prompted. Remove an entry to revoke that person.
 npx wrangler r2 bucket create tts-studio-clips
+npm run api-key -- teammate     # prints a key, and what to do with it
 npx wrangler secret put API_KEYS
 
 npm run deploy
@@ -299,6 +314,17 @@ Without `TURNSTILE_SECRET_KEY`, `/api/tts` refuses every request (it fails close
 | `CACHE_TTL_SECONDS` | `2592000` (30 days) | How long synthesized audio stays in KV. |
 | `TURNSTILE_SITE_KEY` | — | Public Turnstile key. Sent to the browser; leave unset to skip the widget. |
 | `API_DAILY_CHARS` | `200000` | Characters each clips API key may send to Google per UTC day (about US$6 on Chirp 3: HD). |
+| `SUBREQUEST_BUDGET` | `40` | Google calls plus KV and R2 operations one request may make. The free plan allows 50; on a paid plan use e.g. `9000`. |
+
+#### API keys
+
+Keys are not issued by any service: you make them. `npm run api-key -- <name>`
+prints a random key and the line to install. `API_KEYS` holds every key as
+`name:secret`, comma-separated, and **`wrangler secret put` replaces the whole
+value**, so adding a second collaborator means entering both entries. Cloudflare
+never shows a secret again; keep the list in a password manager. To revoke one
+person, put the list back without their entry. The collaborator only gets the
+part after the colon, which their tools send as `Authorization: Bearer …`.
 
 A regional endpoint such as `https://eu-texttospeech.googleapis.com` keeps
 processing in that region, but regions do not carry every model: only the

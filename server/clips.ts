@@ -16,14 +16,21 @@ import {
 import { readConfig, type Bindings, type Config } from "./config";
 import { ApiError, errorResponse, handleError } from "./errors";
 import { resolveCredential, type Credential } from "./google/auth";
-import { synthesizeChunk, type SynthesisOptions } from "./google/tts";
+import type { SynthesisOptions } from "./google/tts";
 import { authenticate } from "./keys";
 import { concatAudio } from "./lib/audio";
-import { cacheKey, readCachedAudio } from "./lib/cache";
 import { splitText } from "./lib/chunk";
 import { enforceRateLimit } from "./protection";
 import { BATCH, invalid, MAX_PROMPT_CHARS, normalize, SPEAKING_RATE, tooLong, unsupportedLanguage } from "./request";
-import { CHUNK_BYTES, mapWithConcurrency, runInBackground, SYNTHESIS_CONCURRENCY } from "./synthesis";
+import {
+  BUDGET_OVERHEAD,
+  CHUNK_BYTES,
+  mapWithConcurrency,
+  runInBackground,
+  SYNTHESIS_CONCURRENCY,
+  synthesizeText,
+  withinBudget,
+} from "./synthesis";
 
 /**
  * Clips: audio for pages built elsewhere, such as a course's HTML exercises.
@@ -45,12 +52,6 @@ export const CLIPS = {
   /** Items per request. Fewer than a batch, because each also costs a storage lookup. */
   maxItems: 100,
   maxTurns: 100,
-  /**
-   * Google calls per request. Anything beyond is returned as "pending" and is
-   * finished by calling again, which keeps every request within the Workers
-   * subrequest limit (50 on the free plan) and a reasonable duration.
-   */
-  maxSynthesisCalls: 40,
   maxBodyBytes: 256 * 1024,
 } as const;
 
@@ -226,18 +227,11 @@ async function writeQuota(kv: KVNamespace | undefined, name: string, used: numbe
 
 /* ---------- synthesis ---------- */
 
-async function synthesizePart(env: Bindings, config: Config, credential: Credential, part: ClipPart) {
-  const cached = await readCachedAudio(
-    env.TTS_CACHE,
-    await cacheKey({ ...part.options, payload: { kind: "text", text: part.text } }),
-  );
-  if (cached) return new Uint8Array(cached.audio);
-
+/** One clip: each part (a sentence, or a dialogue turn) in its own voice, joined in order. */
+async function synthesizeClip(config: Config, credential: Credential, item: ClipItem) {
   const audio = [];
-  for (const text of splitText(part.text, CHUNK_BYTES[part.options.engine], part.options.language)) {
-    audio.push(
-      await synthesizeChunk({ kind: "text", text }, part.options, { endpoint: config.googleEndpoint, credential }),
-    );
+  for (const part of item.parts) {
+    audio.push(await synthesizeText(part.text, part.options, { endpoint: config.googleEndpoint, credential }));
   }
   return concatAudio("mp3", audio);
 }
@@ -287,67 +281,84 @@ clips.post(
     }
     const { engine, items, characters } = await parseClipsRequest(body, config);
 
-    const stored = await Promise.all(items.map((item) => bucket.head(objectKey(item.id))));
-    const ready = new Set(items.filter((_, index) => stored[index]).map((item) => item.id));
+    // Each clip once: two refs for the same sound share it.
+    const distinct = [...new Map(items.map((item) => [item.id, item])).values()];
+    const budget = config.subrequestBudget - BUDGET_OVERHEAD;
+    const worstCost = (item: ClipItem) => 1 + item.calls + 1; // existence check, Google calls, store
 
-    // This round: each missing clip once, within the per-request Google budget.
-    let planned: ClipItem[] = [];
-    const seen = new Set<string>();
-    let calls = 0;
-    for (const item of items) {
-      if (ready.has(item.id) || seen.has(item.id)) continue;
-      seen.add(item.id);
-      if (planned.length && calls + item.calls > CLIPS.maxSynthesisCalls) continue;
-      planned.push(item);
-      calls += item.calls;
-    }
-
-    const used = await readQuota(c.env.TTS_CACHE, key.name);
-    const limit = config.apiDailyChars;
-    if (planned.length) {
-      let room = limit - used;
-      planned = planned.filter((item) => {
-        if (item.characters > room) return false;
-        room -= item.characters;
-        return true;
-      });
-      if (!planned.length) {
-        throw new ApiError(
-          429,
-          "quota_exceeded",
-          `The key "${key.name}" has used ${used} of its ${limit} characters for today. It resets at midnight UTC.`,
-          { details: { used, limit, resetsAt: nextUtcMidnight() } },
+    const ready = new Set<string>();
+    const created = new Set<string>();
+    const failed = new Map<string, ApiError>();
+    for (const item of distinct) {
+      if (worstCost(item) > budget) {
+        failed.set(
+          item.id,
+          new ApiError(
+            413,
+            "too_many_parts",
+            `This clip needs ${item.calls} calls to Google, more than one request may make here. Split it into shorter dialogues.`,
+          ),
         );
       }
     }
 
-    const created = new Set<string>();
-    const failed = new Map<string, ApiError>();
-    if (planned.length) {
-      const credential = await resolveCredential(c.env, engine);
-      await mapWithConcurrency(planned, SYNTHESIS_CONCURRENCY, async (item) => {
-        try {
-          const audio = [];
-          for (const part of item.parts) audio.push(await synthesizePart(c.env, config, credential, part));
-          await bucket.put(objectKey(item.id), concatAudio("mp3", audio), {
-            httpMetadata: { contentType: "audio/mpeg", cacheControl: IMMUTABLE },
-            customMetadata: { characters: String(item.characters), key: key.name, created: new Date().toISOString() },
-          });
-          created.add(item.id);
-          ready.add(item.id);
-        } catch (error) {
-          failed.set(
-            item.id,
-            error instanceof ApiError ? error : new ApiError(502, "synthesis_failed", "This clip could not be made."),
-          );
-          if (!(error instanceof ApiError)) console.error("Clip synthesis failed", error);
-        }
-      });
-      // When nothing succeeded, the cause (credentials, quota at Google…) is the answer.
-      if (!created.size && failed.size) throw failed.values().next().value!;
-    }
+    const used = await readQuota(c.env.TTS_CACHE, key.name);
+    const limit = config.apiDailyChars;
+    let room = limit - used;
+    let overQuota = 0;
+    let credential: Credential | undefined;
 
-    const synthesized = planned.filter((item) => created.has(item.id)).reduce((n, item) => n + item.characters, 0);
+    await withinBudget(
+      distinct.filter((item) => !failed.has(item.id)),
+      budget,
+      worstCost,
+      async (wave) => {
+        const found = await Promise.all(wave.map((item) => bucket.head(objectKey(item.id))));
+        wave.forEach((item, i) => found[i] && ready.add(item.id));
+        const affordable = wave.filter((item, i) => {
+          if (found[i]) return false;
+          if (item.characters > room) {
+            overQuota++;
+            return false;
+          }
+          room -= item.characters;
+          return true;
+        });
+        if (affordable.length) credential ??= await resolveCredential(c.env, engine);
+        await mapWithConcurrency(affordable, SYNTHESIS_CONCURRENCY, async (item) => {
+          try {
+            await bucket.put(objectKey(item.id), await synthesizeClip(config, credential!, item), {
+              httpMetadata: { contentType: "audio/mpeg", cacheControl: IMMUTABLE },
+              customMetadata: { characters: String(item.characters), key: key.name, created: new Date().toISOString() },
+            });
+            created.add(item.id);
+            ready.add(item.id);
+          } catch (error) {
+            if (!(error instanceof ApiError)) console.error("Clip synthesis failed", error);
+            failed.set(
+              item.id,
+              error instanceof ApiError ? error : new ApiError(502, "synthesis_failed", "This clip could not be made."),
+            );
+          }
+        });
+        return wave.length + affordable.reduce((n, item) => n + item.calls + 1, 0);
+      },
+    );
+
+    // Nothing could be made, and the daily budget is why: say so instead of returning "pending" forever.
+    if (overQuota && !created.size) {
+      throw new ApiError(
+        429,
+        "quota_exceeded",
+        `The key "${key.name}" has used ${used} of its ${limit} characters for today. It resets at midnight UTC.`,
+        { details: { used, limit, resetsAt: nextUtcMidnight() } },
+      );
+    }
+    // When nothing succeeded, the cause (credentials, quota at Google…) is the answer.
+    const failures = [...failed.values()].filter((e) => e.code !== "too_many_parts");
+    if (!created.size && !ready.size && failures.length) throw failures[0];
+
+    const synthesized = distinct.filter((item) => created.has(item.id)).reduce((n, item) => n + item.characters, 0);
     if (synthesized) runInBackground(c, writeQuota(c.env.TTS_CACHE, key.name, used + synthesized));
 
     const origin = new URL(c.req.url).origin;

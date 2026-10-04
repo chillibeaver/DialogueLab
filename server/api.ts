@@ -13,7 +13,17 @@ import { cacheKey, readCachedAudio, writeCachedAudio, type CachedAudioMeta } fro
 import { splitText } from "./lib/chunk";
 import { enforceRateLimit, verifyTurnstile } from "./protection";
 import { parseBatchRequest, parseTtsRequest } from "./request";
-import { CHUNK_BYTES, MAX_BODY_BYTES, mapWithConcurrency, runInBackground, SYNTHESIS_CONCURRENCY } from "./synthesis";
+import {
+  BUDGET_OVERHEAD,
+  CHUNK_BYTES,
+  MAX_BODY_BYTES,
+  mapWithConcurrency,
+  runInBackground,
+  SYNTHESIS_CONCURRENCY,
+  synthesisCalls,
+  synthesizeText,
+  withinBudget,
+} from "./synthesis";
 
 type AppEnv = { Bindings: Bindings };
 
@@ -109,39 +119,75 @@ api.post(
     }
     const { items, characters } = parseBatchRequest(body, config);
 
+    const format = items[0].options.format;
+    const engine = items[0].options.engine;
+    const textOf = (item: (typeof items)[number]) => (item.payload.kind === "text" ? item.payload.text : "");
+
+    // Each distinct line once, in order: the client sends lines in playback order.
+    const work: { indexes: number[]; key: string; calls: number }[] = [];
+    const byKey = new Map<string, (typeof work)[number]>();
+    for (const [index, item] of items.entries()) {
+      const key = await cacheKey({ ...item.options, payload: item.payload });
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.indexes.push(index);
+        continue;
+      }
+      const entry = { indexes: [index], key, calls: synthesisCalls(textOf(item), item.options) };
+      byKey.set(key, entry);
+      work.push(entry);
+    }
+    if (format === "ogg_opus" && work.some((w) => w.calls > 1)) {
+      throw new ApiError(413, "text_too_long_for_format", "A line is too long for ogg_opus. Use mp3 or wav.");
+    }
+
     await verifyTurnstile(c.env, c.req.header("x-turnstile-token"), clientIp);
 
-    const keys = await Promise.all(items.map((item) => cacheKey({ ...item.options, payload: item.payload })));
-    const cached = await Promise.all(keys.map((key) => readCachedAudio(c.env.TTS_CACHE, key)));
-
-    // Only the misses reach Google, and only once per distinct line.
-    const pending = items.map((_, index) => index).filter((index) => !cached[index]);
+    const audio = new Map<string, { bytes: Uint8Array<ArrayBuffer>; cache: "HIT" | "MISS" }>();
     let credential: Credential | undefined;
-    if (pending.length > 0) credential = await resolveCredential(c.env, items[0].options.engine);
+    const done = await withinBudget(
+      work,
+      config.subrequestBudget - BUDGET_OVERHEAD,
+      (w) => 1 + w.calls + 1, // cache read, Google calls, cache write
+      async (wave) => {
+        const hits = await Promise.all(wave.map((w) => readCachedAudio(c.env.TTS_CACHE, w.key)));
+        wave.forEach((w, i) => hits[i] && audio.set(w.key, { bytes: new Uint8Array(hits[i].audio), cache: "HIT" }));
+        const misses = wave.filter((_, i) => !hits[i]);
+        if (misses.length) credential ??= await resolveCredential(c.env, engine);
+        await mapWithConcurrency(misses, SYNTHESIS_CONCURRENCY, async (w) => {
+          const item = items[w.indexes[0]];
+          const bytes = await synthesizeText(textOf(item), item.options, {
+            endpoint: config.googleEndpoint,
+            credential: credential!,
+          });
+          audio.set(w.key, { bytes, cache: "MISS" });
+          const meta: CachedAudioMeta = { chunks: w.calls, characters: item.characters };
+          runInBackground(c, writeCachedAudio(c.env.TTS_CACHE, w.key, bytes, meta, config.cacheTtlSeconds));
+        });
+        return wave.length + misses.reduce((n, w) => n + w.calls + 1, 0);
+      },
+    );
+    if (done === 0) {
+      console.error(`SUBREQUEST_BUDGET ${config.subrequestBudget} cannot fit a single line`);
+      throw new ApiError(500, "server_misconfigured", "The server's subrequest budget is too small.");
+    }
 
-    const fresh = new Map<number, Uint8Array<ArrayBuffer>>();
-    await mapWithConcurrency(pending, SYNTHESIS_CONCURRENCY, async (index) => {
-      const { payload, options } = items[index];
-      const audio = await synthesizeChunk(payload, options, {
-        endpoint: config.googleEndpoint,
-        credential: credential!,
-      });
-      fresh.set(index, audio);
-      const meta: CachedAudioMeta = { chunks: 1, characters: items[index].characters };
-      runInBackground(c, writeCachedAudio(c.env.TTS_CACHE, keys[index], audio, meta, config.cacheTtlSeconds));
+    const ready = (index: number) => audio.get(work.find((w) => w.indexes.includes(index))!.key);
+    const results = items.map((item, index) => {
+      const clip = ready(index);
+      return clip
+        ? { status: "ready", audio: bytesToBase64(clip.bytes), characters: item.characters, cache: clip.cache }
+        : { status: "pending", characters: item.characters };
     });
-
-    const format = items[0].options.format;
     return c.json({
       format,
       contentType: AUDIO_FORMATS[format].contentType,
       characters,
-      synthesized: pending.length,
-      items: items.map((item, index) => {
-        const hit = cached[index];
-        const audio = hit ? new Uint8Array(hit.audio) : fresh.get(index)!;
-        return { audio: bytesToBase64(audio), characters: item.characters, cache: hit ? "HIT" : "MISS" };
-      }),
+      synthesized: [...audio.values()].filter((a) => a.cache === "MISS").length,
+      // Lines past the budget: send them again.
+      complete: done === work.length,
+      pending: results.filter((r) => r.status === "pending").length,
+      items: results,
     });
   },
 );

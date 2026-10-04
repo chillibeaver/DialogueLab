@@ -536,3 +536,57 @@ describe("POST /tts/batch", () => {
     expect((await errorOf(voice)).code).toBe("unknown_voice");
   });
 });
+
+describe("POST /tts/batch: long lines and the subrequest budget", () => {
+  function postBatch(body: unknown, env: Bindings, ctx?: ExecutionContext) {
+    return api.request(
+      "/tts/batch",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
+        body: JSON.stringify(body),
+      },
+      env,
+      ctx,
+    );
+  }
+
+  it("splits a line too long for one Google request, and joins the audio", async () => {
+    const fetches = stubFetch();
+    const long = "Une phrase assez longue pour remplir la page. ".repeat(100).trim(); // 4,599 bytes: two chunks
+    const body = (await (await postBatch({ items: [{ text: long }] }, baseEnv(serviceAccountJson))).json()) as any;
+    expect(fetches.ttsCalls()).toHaveLength(2);
+    expect(atob(body.items[0].audio)).toBe("audio-1audio-2");
+  });
+
+  it("synthesizes a repeated line once", async () => {
+    const fetches = stubFetch();
+    const body = (await (
+      await postBatch({ items: [{ text: "Oui." }, { text: "Non." }, { text: "Oui." }] }, baseEnv(serviceAccountJson))
+    ).json()) as any;
+    expect(fetches.ttsCalls()).toHaveLength(2);
+    expect(body.items[2].audio).toBe(body.items[0].audio);
+  });
+
+  it("plays a long new script in rounds, none over 50 subrequests", async () => {
+    const { kv, ops } = fakeKv();
+    const env = baseEnv(serviceAccountJson, { TTS_CACHE: kv });
+    let left = Array.from({ length: 60 }, (_, i) => ({ text: `Réplique numéro ${i}.` }));
+    const done = new Set<string>();
+    let rounds = 0;
+    while (left.length) {
+      const fetches = stubFetch();
+      const before = ops.count;
+      const ctx = fakeExecutionContext();
+      const body = (await (await postBatch({ items: left }, env, ctx.ctx)).json()) as any;
+      await ctx.settle();
+      expect(fetches.calls.length + ops.count - before).toBeLessThanOrEqual(50);
+      body.items.forEach((item: any, i: number) => item.status === "ready" && done.add(left[i].text));
+      expect(body.complete).toBe(body.pending === 0);
+      left = left.filter((item) => !done.has(item.text));
+      expect(++rounds).toBeLessThan(10);
+    }
+    expect(done.size).toBe(60);
+    expect(rounds).toBeGreaterThan(1);
+  });
+});

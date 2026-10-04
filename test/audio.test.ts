@@ -79,3 +79,24 @@ describe("stripMp3Headers", () => {
     expect(stripMp3Headers(audio)).toEqual(audio);
   });
 });
+
+describe("mp3Silence", () => {
+  // Google's Chirp 3: HD output: MPEG-2 Layer III, 24 kHz, 32 kbps, mono: 96-byte frames of 24 ms.
+  const frame = new Uint8Array(96);
+  frame.set([0xff, 0xf3, 0x44, 0xc4]);
+
+  it("makes whole frames in the clip's format, covering the requested time", async () => {
+    const { mp3Silence } = await import("../server/lib/audio");
+    const silence = mp3Silence(frame, 1000);
+    expect(silence.length).toBe(Math.ceil(1000 / 24) * 96);
+    expect([...silence.subarray(0, 4)]).toEqual([0xff, 0xf3, 0x44, 0xc4]);
+    expect([...silence.subarray(96, 100)]).toEqual([0xff, 0xf3, 0x44, 0xc4]);
+    expect(silence.subarray(4, 96).every((b) => b === 0)).toBe(true);
+  });
+
+  it("gives nothing for no time, or for something that is not MP3", async () => {
+    const { mp3Silence } = await import("../server/lib/audio");
+    expect(mp3Silence(frame, 0).length).toBe(0);
+    expect(mp3Silence(new TextEncoder().encode("audio-1"), 500).length).toBe(0);
+  });
+});

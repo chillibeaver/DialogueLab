@@ -299,12 +299,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   async function exportAudio() {
     setBusy(true);
     try {
-      const clips = await player.collectClips();
-      if (!clips?.length) {
-        toast("Could not prepare the audio");
-        return;
-      }
-      download(`${safeFileName(script.title)}.mp3`, new Blob(clips, { type: "audio/mpeg" }));
+      download(`${safeFileName(script.title)}.mp3`, await player.exportAudio());
+    } catch (caught) {
+      toast(caught instanceof Error ? caught.message : "Could not prepare the audio");
     } finally {
       setBusy(false);
     }
@@ -514,8 +511,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           />
         </div>
 
-        <div className="mx-auto grid max-w-[1280px] grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1.5 px-3 py-2 sm:grid-cols-[1fr_auto_1fr] sm:gap-3 sm:px-5 sm:py-2.5">
-          <div className="col-span-2 flex min-w-0 items-center gap-2.5 text-sm sm:col-span-1">
+        {/* Phones: status and settings on top, transport centred below. Wider: one row. */}
+        <div className="mx-auto grid max-w-[1280px] grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 px-3 py-2 sm:grid-cols-[1fr_auto_1fr] sm:gap-3 sm:px-5 sm:py-2.5">
+          <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-2.5 text-sm">
             <span
               className="h-3 w-3 shrink-0 rounded-full"
               style={{ backgroundColor: currentSpeaker?.color ?? "var(--color-rule)" }}
@@ -531,7 +529,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </span>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="col-span-2 row-start-2 flex items-center justify-center gap-1 sm:col-span-1 sm:col-start-2 sm:row-start-1">
             <IconButton
               label="Previous line"
               path={ICONS.prev}
@@ -567,7 +565,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             />
           </div>
 
-          <div className="flex items-center justify-end gap-1.5">
+          <div className="col-start-2 row-start-1 flex items-center justify-end gap-1.5 sm:col-start-3">
             <select
               value={String(prefs.speed)}
               aria-label="Overall speed"
@@ -640,10 +638,14 @@ interface Turnstile {
   render: (
     element: HTMLElement,
     options: { sitekey: string; callback: (token: string) => void; "error-callback": () => void },
-  ) => void;
+  ) => string | undefined;
+  remove?: (widget: string) => void;
 }
 
-/** Tokens are single use, so a fresh widget is rendered for every request. */
+/**
+ * Tokens are single use, so a fresh widget is rendered for every request, and
+ * removed once it has answered, or the page would collect one per request.
+ */
 async function requestTurnstileToken(siteKey: string): Promise<string> {
   const scope = window as unknown as { turnstile?: Turnstile };
   if (!scope.turnstile) {
@@ -657,14 +659,19 @@ async function requestTurnstileToken(siteKey: string): Promise<string> {
     });
     if (!loaded || !scope.turnstile) return "";
   }
-  return new Promise((resolve) => {
-    const container = document.createElement("div");
-    container.style.display = "none";
-    document.body.appendChild(container);
-    scope.turnstile!.render(container, {
+  const turnstile = scope.turnstile;
+  const container = document.createElement("div");
+  container.style.display = "none";
+  document.body.appendChild(container);
+  let widget: string | undefined;
+  const token = await new Promise<string>((resolve) => {
+    widget = turnstile.render(container, {
       sitekey: siteKey,
       callback: resolve,
       "error-callback": () => resolve(""),
     });
   });
+  if (widget) turnstile.remove?.(widget);
+  container.remove();
+  return token;
 }

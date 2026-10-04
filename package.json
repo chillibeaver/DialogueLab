@@ -9,7 +9,8 @@
     "dev": "react-router dev",
     "preview": "npm run build && vite preview",
     "test": "vitest run",
-    "typecheck": "npm run cf-typegen && react-router typegen && tsc -b"
+    "typecheck": "npm run cf-typegen && react-router typegen && tsc -b",
+    "api-key": "node scripts/new-api-key.mjs"
   },
   "dependencies": {
     "hono": "^4.13.12",
