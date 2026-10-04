@@ -105,7 +105,7 @@ export function firstWord(text: string): string {
   return /[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/u.exec(stripPauses(text))?.[0] ?? "";
 }
 
-/** What one line downloads as: its first word, or its number when it has none. */
+/** What one line downloads as: its first word in lower case, or its number when it has none. */
 export function lineFileName(text: string, index: number): string {
-  return `${safeFileName(firstWord(text) || `line ${index + 1}`)}.mp3`;
+  return `${safeFileName(firstWord(text).toLowerCase() || `line ${index + 1}`)}.mp3`;
 }

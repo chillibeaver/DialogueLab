@@ -82,7 +82,12 @@ describe("restoring saved settings", () => {
 describe("naming a line's download", () => {
   it("takes the first word, without the punctuation after it", () => {
     expect(lineFileName("mai, le mai", 0)).toBe("mai.mp3");
-    expect(lineFileName("Bonjour madame, qu'est-ce que je vous sers ?", 0)).toBe("Bonjour.mp3");
+  });
+
+  it("writes it in lower case, all of it, so an acronym does not come out as sNCF", () => {
+    expect(lineFileName("Bonjour madame, qu'est-ce que je vous sers ?", 0)).toBe("bonjour.mp3");
+    expect(lineFileName("L'École est fermée.", 0)).toBe("l'école.mp3");
+    expect(lineFileName("SNCF : le train est en retard.", 0)).toBe("sncf.mp3");
   });
 
   it("keeps an apostrophe or a hyphen inside the word, in either apostrophe", () => {
