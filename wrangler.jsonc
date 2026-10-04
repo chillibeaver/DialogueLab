@@ -31,10 +31,10 @@
     // cannot take this from the request. With a custom domain, put it here.
     "SITE_URL": "https://tts-studio.edgebeaver.workers.dev",
     // Hard cap on what the site spends at Google per month (US Pacific calendar
-    // month, as Google bills), in US dollars: about ¥30. Once it is spent, nothing
-    // new is synthesized until the next month; cached audio and clips still play.
+    // month, as Google bills), in US dollars. Once it is spent, nothing new is
+    // synthesized until the next month; cached audio and clips still play.
     // Takes effect on the next deploy. Remove it for no cap.
-    "MONTHLY_BUDGET_USD": "4",
+    "MONTHLY_BUDGET_USD": "30",
     // Chirp 3: HD characters Google does not bill each month, per billing
     // account. Set "0" if other projects on the billing account use Chirp 3: HD.
     "CHIRP_FREE_CHARS": "1000000",
