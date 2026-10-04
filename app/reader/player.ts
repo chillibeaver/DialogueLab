@@ -664,14 +664,13 @@ export class Player {
   }
 
   /**
-   * The whole script as one MP3, skipped speakers left out, with real silence
-   * for pause markers and for the gap between lines. Each clip's leading tag
-   * and header frame are dropped, or players would take the first clip's
-   * header as the duration of the whole file.
+   * Lines as one MP3: by default the whole script, skipped speakers left out.
+   * Pause markers and the gap between lines become real silence. Each clip's
+   * leading tag and header frame are dropped, or players would take the first
+   * clip's header as the duration of the whole file.
    */
-  async exportAudio(): Promise<Blob> {
+  async exportAudio(lines = this.playableLines()): Promise<Blob> {
     const script = this.ctx.script;
-    const lines = this.playableLines();
     const requests = this.requestsFor(lines);
     await this.need(requests, true);
 

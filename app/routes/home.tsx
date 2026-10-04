@@ -23,7 +23,7 @@ import { IDLE_STATE, Player, type PlayerState } from "../reader/player";
 import { BulkText, ScriptLines } from "../reader/script-panel";
 import { serializePack } from "../reader/format";
 import { ImportDialog } from "../reader/import-dialog";
-import { estimateMs, formatDuration, safeFileName } from "../reader/text";
+import { estimateMs, formatDuration, lineFileName, safeFileName } from "../reader/text";
 import { Icon, IconButton, ICONS, Tabs, toggleButton } from "../reader/ui";
 import type { Route } from "./+types/home";
 
@@ -316,6 +316,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     }
   }
 
+  /** One line as an MP3 named after its first word, its pauses included. */
+  async function downloadLine(index: number) {
+    try {
+      download(lineFileName(script.lines[index].text, index), await player.exportAudio([index]));
+    } catch (caught) {
+      toast(caught instanceof Error ? caught.message : "Could not prepare the audio");
+    }
+  }
+
   function previewSpeaker(speaker: Speaker) {
     const index = script.lines.findIndex((line) => line.sp === speaker.id);
     player.unlock();
@@ -496,6 +505,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 player.unlock();
                 void player.play(index, false);
               }}
+              onDownloadLine={downloadLine}
             />
           ) : (
             <BulkText key={script.id} reader={reader} onApplied={() => setMainTab("lines")} />

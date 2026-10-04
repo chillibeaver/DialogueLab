@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_DICT, DICT_DEFAULTS_VERSION, missingDefaults, restorePrefs, type DictRule } from "../app/reader/model";
-import { applyDict } from "../app/reader/text";
+import { applyDict, firstWord, lineFileName } from "../app/reader/text";
 
 const fr = (text: string, dict: readonly DictRule[] = DEFAULT_DICT) => applyDict(text, dict, "fr-FR");
 
@@ -76,5 +76,30 @@ describe("restoring saved settings", () => {
     const prefs = restorePrefs({ dict: [{ from: "Mme", to: "Madame", on: false }] });
     expect(prefs.dict.filter((rule) => rule.from === "Mme")).toHaveLength(1);
     expect(prefs.dict[0].on).toBe(false);
+  });
+});
+
+describe("naming a line's download", () => {
+  it("takes the first word, without the punctuation after it", () => {
+    expect(lineFileName("mai, le mai", 0)).toBe("mai.mp3");
+    expect(lineFileName("Bonjour madame, qu'est-ce que je vous sers ?", 0)).toBe("Bonjour.mp3");
+  });
+
+  it("keeps an apostrophe or a hyphen inside the word, in either apostrophe", () => {
+    expect(firstWord("Qu'est-ce que c'est ?")).toBe("Qu'est-ce");
+    expect(firstWord("Aujourd’hui il pleut.")).toBe("Aujourd’hui");
+    expect(firstWord("L'école est fermée.")).toBe("L'école");
+  });
+
+  it("skips what comes before the first word: dashes, quotes, pause markers", () => {
+    expect(firstWord("— Oui, bien sûr.")).toBe("Oui");
+    expect(firstWord("« Mai » est un mois.")).toBe("Mai");
+    expect(firstWord("[1.5] Et voilà.")).toBe("Et");
+    expect(firstWord("[pause 2] 2024 était une bonne année.")).toBe("2024");
+  });
+
+  it("falls back to the line's number when there is no word", () => {
+    expect(lineFileName("… ?", 2)).toBe("line 3.mp3");
+    expect(lineFileName("", 0)).toBe("line 1.mp3");
   });
 });
