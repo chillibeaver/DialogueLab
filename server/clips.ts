@@ -95,7 +95,7 @@ interface ClipItem {
   id: string;
   parts: ClipPart[];
   characters: number;
-  /** Google calls needed if nothing is cached. */
+  /** Google calls needed to make the clip, if it does not exist yet. */
   calls: number;
 }
 
@@ -165,7 +165,6 @@ export async function parseClipsRequest(body: unknown, config: Config) {
         throw invalid(`${where}: speakingRate is only supported by the chirp3-hd engine.`);
       }
 
-      // Same key order as the reader's requests, so a line it already synthesized is a cache hit here.
       const options: SynthesisOptions =
         engine === "chirp3-hd"
           ? { engine, language, voice, format: "mp3", speakingRate }

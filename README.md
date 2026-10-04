@@ -86,8 +86,9 @@ with its own address filled in.
   by browsers for a year, and **never calls Google**. The key therefore never
   has to appear in a page, and replaying costs nothing.
 - **Same input, same URL.** A clip's id hashes everything that shapes its
-  sound, so asking again is free (`created: false`). A line the reader already
-  synthesized is reused from the KV cache.
+  sound, so asking again is free (`created: false`). Clips do not read the
+  reader's KV cache: an existence check in R2 is all a repeat costs, which
+  keeps each request's subrequest budget for new clips.
 - **Bounded.** Each request stays within a subrequest budget (see below); what
   does not fit comes back `pending`, and the client sends those items again.
   Each key has a daily character budget (`API_DAILY_CHARS`) and its own rate
