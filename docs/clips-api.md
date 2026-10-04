@@ -149,6 +149,103 @@ MP3 files next to the HTML, referencing them by relative path:
 curl -s -o audio/ex1-q1.mp3 "https://tts.example.com/api/v1/clips/16eedb01e42ae4d3d4da6b2255f3143c.mp3"
 ```
 
+## Converting a page that uses the browser's speech
+
+Many exercise pages speak with the browser (`speechSynthesis`), passing the
+sentence itself to a function such as `parler(texte)`. Convert them like this:
+
+1. **Collect every string the page can speak** from its data: each sentence,
+   each worked example, each line of each document.
+2. **Use the text itself as the `ref`.** The build script then returns a map
+   from sentence to URL, which is exactly what the page looks things up by.
+   When one page has several voices, use `"Voice|text"` as the `ref` instead
+   (for example `"Kore|Bonjour !"`), so that the same words in two voices do
+   not collide.
+3. **Write the map into the page** and replace the speech call:
+
+```js
+// Written by the build step: every sentence the page can say, and its clip.
+const AUDIO = {
+  "Tu attends le bus ?": "https://tts.example.com/api/v1/clips/….mp3",
+  // …
+};
+
+const player = new Audio();
+
+/**
+ * Plays one clip and resolves when it ends, so clips can be chained. The speed
+ * is set on every call: changing `src` resets it, so a speed left over from a
+ * slow replay would otherwise carry into the next clip.
+ */
+function jouer(url, vitesse = 1) {
+  return new Promise((resolve) => {
+    player.src = url;
+    // Slow playback is free: the same clip, played slower, at the same pitch.
+    player.defaultPlaybackRate = player.playbackRate = vitesse;
+    player.onended = resolve;
+    player.play();
+  });
+}
+
+function parler(texte, lent) {
+  const url = AUDIO[texte];
+  if (!url) return console.warn("No clip for:", texte);
+  jouer(url, lent ? 0.75 : 1);
+}
+```
+
+4. **Remove the browser voice picker.** Voices are chosen at build time, so
+   it no longer does anything. Offering a choice would mean making every clip
+   once per voice, multiplying the cost.
+
+### Slow versions
+
+**Never request a second, slower clip.** Play the normal clip with
+`playbackRate` (0.75 is a good "slow"). Browsers keep the pitch, it costs
+nothing, and the learner hears the same recording at both speeds.
+
+### Documents: several speakers, replayable sentences
+
+A listening document with speakers (for example `{ s: 0, t: "…" }` turns) that
+is played whole, and whose sentences can then be clicked to hear again:
+
+- **Make one clip per piece the page can play on its own**, in that piece's
+  speaker's voice. If the page splits each turn into sentences for clicking,
+  make clips for exactly those sentences, splitting them **with the page's own
+  function** at build time so that the refs match what the page looks up.
+- **Play the whole document by chaining those clips**, with a short silence
+  between turns:
+
+```js
+async function jouerDocument(morceaux) { // [{ voix, texte }, …] in order
+  for (const { voix, texte } of morceaux) {
+    await jouer(AUDIO[`${voix}|${texte}`]);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+}
+```
+
+Do not also make the whole document as one `turns` clip: that pays for the same
+words twice. Use `turns` only when the document is never broken into
+sentences.
+
+Give each speaker a fixed voice for the whole page, and a different gender
+where possible, so learners can tell them apart.
+
+### Language
+
+Content set in Quebec or Canada can use `fr-CA` voices instead of `fr-FR`;
+ask the human which accent the course wants. A clip in one is a different clip
+from the other.
+
+### What it costs
+
+Characters are billed once per distinct clip, at about US$30 per million on
+Chirp 3: HD. Count the characters of the unique strings you send. For scale: a
+week of daily exercises with about 45 sentences and two short documents a day
+is roughly 10,000 to 15,000 characters, about US$0.30 to 0.45, paid once. After
+that, every play is free.
+
 ## A complete build script
 
 Node 18 or later, no dependencies. Input: a JSON file in the request format
