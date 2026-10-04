@@ -12,7 +12,9 @@
 		"DEFAULT_LANGUAGE": "fr-FR",
 		// Hard cap on characters per /api/tts request (cost control).
 		"MAX_CHARS": "5000",
-		// Use https://eu-texttospeech.googleapis.com to keep processing in the EU.
+		// Regional endpoints (eu-, us-, northamerica-northeast1-) keep processing in
+		// that region but do not serve every model: only this global endpoint has
+		// gemini-3.1-flash-tts-preview. See README "Configuration".
 		"GOOGLE_TTS_ENDPOINT": "https://texttospeech.googleapis.com",
 		// How long synthesized audio stays in the KV cache (30 days).
 		"CACHE_TTL_SECONDS": "2592000"

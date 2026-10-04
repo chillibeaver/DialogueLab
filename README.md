@@ -141,8 +141,16 @@ Without `TURNSTILE_SECRET_KEY`, `/api/tts` refuses every request (it fails close
 | `DEFAULT_ENGINE` | `chirp3-hd` | Engine used when the request omits `engine`. |
 | `DEFAULT_LANGUAGE` | `fr-FR` | Language used when the request omits `language`; listed first in the catalog. |
 | `MAX_CHARS` | `5000` | Maximum characters per request. |
-| `GOOGLE_TTS_ENDPOINT` | `https://texttospeech.googleapis.com` | Use `https://eu-texttospeech.googleapis.com` to keep processing in the EU. |
+| `GOOGLE_TTS_ENDPOINT` | `https://texttospeech.googleapis.com` | Regional endpoint. See the caveat below before changing it. |
 | `CACHE_TTL_SECONDS` | `2592000` (30 days) | How long synthesized audio stays in KV. |
+
+A regional endpoint such as `https://eu-texttospeech.googleapis.com` keeps
+processing in that region, but regions do not carry every model: only the
+default global endpoint serves `gemini-3.1-flash-tts-preview`, and
+`northamerica-northeast1` serves neither that nor `gemini-2.5-pro-tts`. The two
+settings are validated independently, so an unsupported pairing fails at Google
+rather than at request validation. See
+[Available regions](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts#available-regions).
 
 The rate limit (10 requests per 60 s per IP) is set under `ratelimits` in `wrangler.jsonc`. Cloudflare applies it per location and treats it as approximate, so it is a brake, not exact accounting.
 
