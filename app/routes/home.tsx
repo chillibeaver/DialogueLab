@@ -194,10 +194,13 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   /* ---------- player ---------- */
 
-  const turnstileToken = useCallback(
-    async () => (turnstileSiteKey ? requestTurnstileToken(turnstileSiteKey) : ""),
-    [turnstileSiteKey],
-  );
+  const turnstileToken = useCallback(async () => {
+    if (!turnstileSiteKey) return "";
+    const token = await requestTurnstileToken(turnstileSiteKey);
+    // Sent without a token, the request would only earn a 403 worded for developers.
+    if (!token) throw new Error("The check that you are not a bot did not finish. Reload the page and try again.");
+    return token;
+  }, [turnstileSiteKey]);
 
   const playerRef = useRef<Player | null>(null);
   playerRef.current ??= new Player({ script, prefs, limits: catalog.limits.batch, turnstileToken });
@@ -637,14 +640,28 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 interface Turnstile {
   render: (
     element: HTMLElement,
-    options: { sitekey: string; callback: (token: string) => void; "error-callback": () => void },
+    options: {
+      sitekey: string;
+      appearance: "interaction-only";
+      callback: (token: string) => void;
+      "error-callback": () => void;
+      "timeout-callback": () => void;
+    },
   ) => string | undefined;
   remove?: (widget: string) => void;
 }
 
+/** Long enough to notice and tick the checkbox; past it, the request gives up. */
+const TURNSTILE_WAIT_MS = 120_000;
+
 /**
  * Tokens are single use, so a fresh widget is rendered for every request, and
  * removed once it has answered, or the page would collect one per request.
+ *
+ * The widget stays invisible unless Turnstile wants the visitor to tick a box;
+ * then it appears above the transport bar. A hidden container would leave that
+ * box unseen and the token unanswered, and the player, which sends one batch
+ * at a time, would stall. So every outcome, silence included, settles here.
  */
 async function requestTurnstileToken(siteKey: string): Promise<string> {
   const scope = window as unknown as { turnstile?: Turnstile };
@@ -661,17 +678,27 @@ async function requestTurnstileToken(siteKey: string): Promise<string> {
   }
   const turnstile = scope.turnstile;
   const container = document.createElement("div");
-  container.style.display = "none";
+  container.className = "fixed left-1/2 z-[80] -translate-x-1/2";
+  container.style.bottom = "calc(var(--tbh) + 64px)";
   document.body.appendChild(container);
   let widget: string | undefined;
-  const token = await new Promise<string>((resolve) => {
-    widget = turnstile.render(container, {
-      sitekey: siteKey,
-      callback: resolve,
-      "error-callback": () => resolve(""),
+  try {
+    return await new Promise<string>((resolve) => {
+      const timer = setTimeout(() => resolve(""), TURNSTILE_WAIT_MS);
+      const settle = (token: string) => {
+        clearTimeout(timer);
+        resolve(token);
+      };
+      widget = turnstile.render(container, {
+        sitekey: siteKey,
+        appearance: "interaction-only",
+        callback: settle,
+        "error-callback": () => settle(""),
+        "timeout-callback": () => settle(""),
+      });
     });
-  });
-  if (widget) turnstile.remove?.(widget);
-  container.remove();
-  return token;
+  } finally {
+    if (widget) turnstile.remove?.(widget);
+    container.remove();
+  }
 }
