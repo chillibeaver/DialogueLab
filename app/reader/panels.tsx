@@ -13,7 +13,26 @@ import {
   type Speaker,
   type Store,
 } from "./model";
-import { BTN, BTN_PRIMARY, Check, Code, Field, Heading, Icon, IconButton, ICONS, INPUT, Note, Rule, Slider } from "./ui";
+import {
+  BTN,
+  BTN_DANGER,
+  BTN_PRIMARY,
+  Check,
+  Code,
+  Field,
+  Heading,
+  Icon,
+  IconButton,
+  ICONS,
+  INPUT,
+  Note,
+  Rule,
+  SEGMENT,
+  SEGMENT_OFF,
+  SEGMENT_ON,
+  SEGMENTS,
+  Slider,
+} from "./ui";
 
 export interface Reader {
   catalog: Catalog;
@@ -239,16 +258,15 @@ function SpeakerCard({ speaker, index, reader }: { speaker: Speaker; index: numb
         />
       )}
 
-      <div className="inline-flex overflow-hidden rounded-lg border border-rule text-sm">
+      <div role="radiogroup" aria-label={`How to handle ${speaker.name}`} className={`inline-flex ${SEGMENTS}`}>
         {(["speak", "skip"] as const).map((mode) => (
           <button
             key={mode}
             type="button"
-            aria-pressed={speaker.mode === mode}
+            role="radio"
+            aria-checked={speaker.mode === mode}
             onClick={() => edit((draft) => void (draft.mode = mode))}
-            className={`px-2.5 py-1 ${
-              speaker.mode === mode ? "bg-ink text-surface" : "text-muted hover:text-ink"
-            } ${mode === "skip" ? "border-l border-rule" : ""}`}
+            className={`${SEGMENT} py-1 ${speaker.mode === mode ? SEGMENT_ON : SEGMENT_OFF}`}
           >
             {mode === "speak" ? "Read aloud" : "Skip"}
           </button>
@@ -519,7 +537,7 @@ export function LibraryPanel({
 
       <Rule />
       <Heading>Import</Heading>
-      <button type="button" className={BTN_PRIMARY} onClick={onImport}>
+      <button type="button" className={BTN} onClick={onImport}>
         Import scripts…
       </button>
       <Note>
@@ -554,7 +572,7 @@ export function LibraryPanel({
       </Note>
 
       <Rule />
-      <button type="button" className={`${BTN} text-danger`} onClick={onDelete}>
+      <button type="button" className={BTN_DANGER} onClick={onDelete}>
         Delete this script
       </button>
     </div>

@@ -63,83 +63,100 @@
 }
 
 /*
- * color-scheme decides how native parts render: scrollbars, the open list of a
- * <select>, checkboxes. It is set here, outside any layer, on purpose: a
- * declaration outside a layer always beats one inside it, so splitting it
- * between the two left every native control light even in the dark theme.
+ * Every element-level rule lives in the base layer. Tailwind's utilities sit
+ * in a later layer, so they always win over these; a rule outside any layer
+ * would beat every utility instead. That is how `button { color: inherit }`
+ * once hid the text of every coloured button, and how a split color-scheme
+ * left native controls light in the dark theme.
  */
-:root {
-  color-scheme: light;
-}
+@layer base {
+  /* How native parts render: scrollbars, the open list of a <select>, checkboxes. */
+  :root {
+    color-scheme: light;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
     color-scheme: dark;
+  }
+
+  /*
+   * Scrollbars drawn from the theme tokens. scrollbar-color is inherited, so
+   * setting it on the root reaches every scroll container; Chrome and Firefox
+   * use these two properties, and Safari, which lacks them, uses the rules below.
+   */
+  :root {
+    scrollbar-color: color-mix(in srgb, var(--color-muted) 45%, transparent) transparent;
+  }
+
+  * {
+    scrollbar-width: thin;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+    background-color: color-mix(in srgb, var(--color-muted) 45%, transparent);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-muted);
+  }
+
+  html {
+    scroll-padding-top: calc(env(safe-area-inset-top, 0px) + var(--toph) + 12px);
+    background-color: var(--color-bg);
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-ui);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
   }
 }
 
-:root[data-theme="dark"] {
-  color-scheme: dark;
-}
-
 /*
- * Scrollbars drawn from the theme tokens. scrollbar-color is inherited, so
- * setting it on the root reaches every scroll container; Chrome and Firefox use
- * these two properties, and Safari, which lacks them, uses the rules below.
+ * Speaker colours come from one palette chosen for light backgrounds; as text
+ * on the dark theme they are too dark to read, so there they are lightened.
+ * Set the colour on the element as --speaker.
  */
-:root {
-  scrollbar-color: color-mix(in srgb, var(--color-muted) 45%, transparent) transparent;
-}
+@layer components {
+  .speaker-text {
+    color: var(--speaker);
+  }
 
-* {
-  scrollbar-width: thin;
-}
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .speaker-text {
+      color: color-mix(in oklab, var(--speaker) 55%, white);
+    }
+  }
 
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-track,
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background-clip: padding-box;
-  background-color: color-mix(in srgb, var(--color-muted) 45%, transparent);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background-color: var(--color-muted);
-}
-
-html {
-  scroll-padding-top: calc(env(safe-area-inset-top, 0px) + var(--toph) + 12px);
-  background-color: var(--color-bg);
-}
-
-body {
-  margin: 0;
-  background-color: var(--color-bg);
-  color: var(--color-ink);
-  font-family: var(--font-ui);
-  -webkit-text-size-adjust: 100%;
-}
-
-input,
-select,
-textarea,
-button {
-  font: inherit;
-  color: inherit;
-}
-
-:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+  :root[data-theme="dark"] .speaker-text {
+    color: color-mix(in oklab, var(--speaker) 55%, white);
+  }
 }
 
 /* The countdown bar shown while a shadowing pause runs. */

@@ -6,15 +6,36 @@ export const INPUT =
   "w-full min-w-0 rounded-md border border-rule bg-surface px-2.5 py-1.5 text-sm " +
   "placeholder:text-muted focus:border-accent focus:outline-none";
 
-export const BTN =
-  "inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-rule bg-surface " +
-  "px-3 py-1.5 text-sm leading-tight transition hover:border-muted " +
-  "disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-rule";
+const BUTTON =
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm " +
+  "font-medium leading-tight transition-colors disabled:cursor-not-allowed disabled:opacity-45";
 
-export const BTN_PRIMARY =
-  "inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-accent bg-accent " +
-  "px-3 py-1.5 text-sm font-semibold leading-tight text-accent-ink transition hover:opacity-90 " +
-  "disabled:cursor-not-allowed disabled:opacity-40";
+/** The everyday button: the surface colour, with ink text at full contrast. */
+export const BTN = `${BUTTON} border-rule bg-surface text-ink hover:border-muted/50 hover:bg-soft`;
+
+/** One per view, for the action the view is for. */
+export const BTN_PRIMARY = `${BUTTON} border-transparent bg-accent font-semibold text-accent-ink hover:brightness-110`;
+
+/** For actions that delete something. */
+export const BTN_DANGER = `${BUTTON} border-rule bg-surface text-danger hover:border-danger/50 hover:bg-danger/10`;
+
+/**
+ * A toggle (aria-pressed). Each variant is a complete class list: appending a
+ * second colour class to BTN would not override it, because which of two
+ * same-property utilities wins depends on Tailwind's output order.
+ */
+export const toggleButton = (on: boolean) =>
+  on ? `${BUTTON} border-accent/60 bg-accent/15 text-accent hover:bg-accent/20` : BTN;
+
+/**
+ * Segmented controls: a recessed track holding the options; the chosen one
+ * is a raised card with ink text, so it reads clearly in both themes.
+ */
+export const SEGMENTS = "rounded-lg border border-rule bg-bg p-0.5";
+export const SEGMENT =
+  "relative rounded-md px-2.5 text-sm transition-colors focus-visible:z-10";
+export const SEGMENT_ON = "bg-surface font-semibold text-ink shadow-sm ring-1 ring-rule";
+export const SEGMENT_OFF = "text-muted hover:text-ink";
 
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
@@ -127,14 +148,10 @@ export function Tabs<T extends string>({
   }
 
   return (
-    <div
-      role="tablist"
-      aria-label={label}
-      className={`mb-4 rounded-lg border border-rule bg-surface p-0.5 ${stretch ? "flex" : "inline-flex"}`}
-    >
+    <div role="tablist" aria-label={label} className={`mb-4 ${SEGMENTS} ${stretch ? "flex" : "inline-flex"}`}>
       {tabs.map(([id, text], index) => {
         const selected = active === id;
-        // A divider sits between two unselected tabs; the selected pill needs none.
+        // A divider sits between two unselected tabs; the raised card needs none.
         const divider = index > 0 && !selected && tabs[index - 1][0] !== active;
         return (
           <button
@@ -145,9 +162,9 @@ export function Tabs<T extends string>({
             tabIndex={selected ? 0 : -1}
             onClick={() => onSelect(id)}
             onKeyDown={(event) => onKeyDown(event, index)}
-            className={`relative min-w-0 truncate rounded-md px-2.5 py-1.5 text-sm transition-colors ${
-              stretch ? "flex-auto" : ""
-            } ${selected ? "bg-ink font-semibold text-surface" : "text-muted hover:bg-soft hover:text-ink"} ${
+            className={`${SEGMENT} min-w-0 truncate py-1.5 ${stretch ? "flex-auto" : ""} ${
+              selected ? SEGMENT_ON : SEGMENT_OFF
+            } ${
               divider
                 ? "before:absolute before:inset-y-2 before:left-0 before:w-px before:bg-rule before:content-['']"
                 : ""
@@ -175,14 +192,18 @@ export function IconButton({
   path,
   disabled,
   size = 18,
-  className = "",
+  large = false,
+  strong = false,
 }: {
   label: string;
   onClick: () => void;
   path: string;
   disabled?: boolean;
   size?: number;
-  className?: string;
+  /** The transport's larger hit area. */
+  large?: boolean;
+  /** Ink instead of muted, for primary controls. */
+  strong?: boolean;
 }) {
   return (
     <button
@@ -191,7 +212,9 @@ export function IconButton({
       disabled={disabled}
       aria-label={label}
       title={label}
-      className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-soft hover:text-ink disabled:cursor-not-allowed disabled:opacity-30 ${className}`}
+      className={`grid shrink-0 place-items-center rounded-lg transition-colors hover:bg-soft hover:text-ink disabled:cursor-not-allowed disabled:opacity-30 ${
+        large ? "h-10 w-10" : "h-8 w-8"
+      } ${strong ? "text-ink" : "text-muted"}`}
     >
       <Icon path={path} size={size} />
     </button>

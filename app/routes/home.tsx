@@ -23,7 +23,7 @@ import { BulkText, ScriptLines } from "../reader/script-panel";
 import { serializePack } from "../reader/format";
 import { ImportDialog } from "../reader/import-dialog";
 import { estimateMs, formatDuration, safeFileName } from "../reader/text";
-import { BTN, Icon, IconButton, ICONS, Tabs } from "../reader/ui";
+import { Icon, IconButton, ICONS, Tabs, toggleButton } from "../reader/ui";
 import type { Route } from "./+types/home";
 
 const TITLE = "TTS Studio — read dialogue aloud with Google Cloud voices";
@@ -60,7 +60,7 @@ export function loader({ context, request }: Route.LoaderArgs) {
  * fixed rather than random so the server and the first client render agree,
  * and its content is a real scene so the page is not an empty shell.
  */
-function seedStore(defaultLanguage: string, voices: string[]): Store {
+function seedStore(defaultLanguage: string): Store {
   const script = makeScript(
     "Au café",
     defaultLanguage,
@@ -77,7 +77,8 @@ function seedStore(defaultLanguage: string, voices: string[]): Store {
       ["Serveur", "Pas de problème. Bonne journée !"],
       ["Claire", "Merci, à vous aussi !"],
     ],
-    voices,
+    // Narrateur, Serveur, Claire: two men and a woman.
+    ["Charon", "Achird", "Kore"],
   );
 
   const idOf = new Map(script.speakers.map((sp, index) => [sp.id, `sample-sp-${index}`]));
@@ -111,7 +112,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const { catalog, turnstileSiteKey } = loaderData;
   const voiceNames = useMemo(() => catalog.voices.map((v) => v.name), [catalog.voices]);
 
-  const [store, setStore] = useState<Store>(() => seedStore(catalog.defaults.language, voiceNames));
+  const [store, setStore] = useState<Store>(() => seedStore(catalog.defaults.language));
   const [hydrated, setHydrated] = useState(false);
   const [sideTab, setSideTab] = useState<SideTab>("cast");
   const [mainTab, setMainTab] = useState<MainTab>("lines");
@@ -368,7 +369,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             path={ICONS.sidebar}
             onClick={toggleSidebar}
             size={22}
-            className="h-9 w-9 text-ink"
+            strong
           />
           <input
             value={script.title}
@@ -516,7 +517,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               path={ICONS.prev}
               onClick={() => player.skip(-1)}
               size={22}
-              className="h-10 w-10 text-ink"
+              large
+              strong
             />
             <button
               type="button"
@@ -532,14 +534,16 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               path={ICONS.stop}
               onClick={() => player.stop()}
               size={22}
-              className="h-10 w-10 text-ink"
+              large
+              strong
             />
             <IconButton
               label="Next line"
               path={ICONS.next}
               onClick={() => player.skip(1)}
               size={22}
-              className="h-10 w-10 text-ink"
+              large
+              strong
             />
           </div>
 
@@ -560,7 +564,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               type="button"
               aria-pressed={prefs.slow}
               onClick={() => editPrefs((draft) => void (draft.slow = !draft.slow))}
-              className={`${BTN} ${prefs.slow ? "border-ink bg-ink text-surface" : ""}`}
+              className={toggleButton(prefs.slow)}
             >
               Slow
             </button>
@@ -568,7 +572,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               type="button"
               aria-pressed={prefs.loop}
               onClick={() => editPrefs((draft) => void (draft.loop = !draft.loop))}
-              className={`${BTN} ${prefs.loop ? "border-ink bg-ink text-surface" : ""}`}
+              className={toggleButton(prefs.loop)}
             >
               Loop
             </button>

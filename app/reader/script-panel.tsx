@@ -143,8 +143,8 @@ export function ScriptLines({
                 value={line.sp}
                 aria-label={`Who says line ${index + 1}`}
                 onChange={(e) => editScript((draft) => void (draft.lines[index].sp = e.target.value))}
-                className="max-w-full truncate rounded border-0 bg-transparent px-1 py-0.5 text-sm font-semibold focus:outline-none"
-                style={{ color: speaker.color }}
+                className="speaker-text max-w-full truncate rounded border-0 bg-transparent px-1 py-0.5 text-sm font-semibold focus:outline-none"
+                style={{ "--speaker": speaker.color } as React.CSSProperties}
               >
                 {script.speakers.map((s) => (
                   <option key={s.id} value={s.id}>
