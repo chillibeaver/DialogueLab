@@ -6,6 +6,8 @@ import { ENGINES, type Engine } from "./catalog";
  */
 export interface Bindings {
   // Secrets
+  /** Chirp 3: HD only. Preferred when set: sent as the `key` query parameter. */
+  GOOGLE_TTS_API_KEY?: string;
   GOOGLE_SERVICE_ACCOUNT_JSON?: string;
   TURNSTILE_SECRET_KEY?: string;
   /** Local development only: set to "true" in .dev.vars to skip Turnstile. */

@@ -18,7 +18,8 @@
 		"CACHE_TTL_SECONDS": "2592000"
 	},
 	// Secrets (set with `wrangler secret put`, or in .dev.vars locally):
-	//   GOOGLE_SERVICE_ACCOUNT_JSON  - full service account key JSON
+	//   GOOGLE_TTS_API_KEY           - API key, enough for Chirp 3: HD
+	//   GOOGLE_SERVICE_ACCOUNT_JSON  - service account key JSON; required for Gemini-TTS
 	//   TURNSTILE_SECRET_KEY         - Cloudflare Turnstile secret key
 	"ratelimits": [
 		{

@@ -4,7 +4,7 @@ import { bodyLimit } from "hono/body-limit";
 import { DEFAULT_GEMINI_MODEL, DEFAULT_VOICE, GEMINI_MODELS, listLanguages, VOICES } from "./catalog";
 import { readConfig, type Bindings } from "./config";
 import { ApiError, errorResponse, handleError } from "./errors";
-import { getAccessToken } from "./google/auth";
+import { resolveCredential } from "./google/auth";
 import { AUDIO_FORMATS, synthesizeChunk, type AudioFormat } from "./google/tts";
 import { concatAudio } from "./lib/audio";
 import { cacheKey, readCachedAudio, writeCachedAudio, type CachedAudioMeta } from "./lib/cache";
@@ -87,9 +87,9 @@ api.post(
     const cached = await readCachedAudio(c.env.TTS_CACHE, key);
     if (cached) return audioResponse(cached.audio, options.format, cached.meta, "HIT");
 
-    const accessToken = await getAccessToken(c.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    const credential = await resolveCredential(c.env, options.engine);
     const parts = await mapWithConcurrency(chunks, SYNTHESIS_CONCURRENCY, (chunk) =>
-      synthesizeChunk(chunk, options, { endpoint: config.googleEndpoint, accessToken }),
+      synthesizeChunk(chunk, options, { endpoint: config.googleEndpoint, credential }),
     );
     const audio = concatAudio(options.format, parts);
     const meta: CachedAudioMeta = { chunks: chunks.length, characters };

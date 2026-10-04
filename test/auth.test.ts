@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../server/errors";
-import { clearTokenCache, getAccessToken } from "../server/google/auth";
+import { clearTokenCache, getAccessToken, resolveCredential } from "../server/google/auth";
 import { makeServiceAccount, stubFetch } from "./helpers";
 
 let account: Awaited<ReturnType<typeof makeServiceAccount>>;
@@ -77,5 +77,46 @@ describe("getAccessToken", () => {
     const error = await getAccessToken(account.json).catch((e) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 502, code: "upstream_auth_failed" });
+  });
+});
+
+describe("resolveCredential", () => {
+  it("uses the API key for chirp3-hd, without a token exchange", async () => {
+    const fetches = stubFetch();
+    const credential = await resolveCredential({ GOOGLE_TTS_API_KEY: "  key-123  " }, "chirp3-hd");
+
+    expect(credential).toEqual({ kind: "apiKey", value: "key-123" });
+    expect(fetches.tokenCalls()).toHaveLength(0);
+  });
+
+  it("falls back to the service account for chirp3-hd when no API key is set", async () => {
+    stubFetch();
+    expect(await resolveCredential({ GOOGLE_SERVICE_ACCOUNT_JSON: account.json }, "chirp3-hd")).toEqual({
+      kind: "bearer",
+      value: "token-abc",
+    });
+  });
+
+  it("ignores the API key for gemini, which Google rejects without a principal", async () => {
+    stubFetch();
+    expect(
+      await resolveCredential({ GOOGLE_TTS_API_KEY: "key-123", GOOGLE_SERVICE_ACCOUNT_JSON: account.json }, "gemini"),
+    ).toEqual({ kind: "bearer", value: "token-abc" });
+  });
+
+  it("reports gemini as unavailable when only an API key is configured", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(resolveCredential({ GOOGLE_TTS_API_KEY: "key-123" }, "gemini")).rejects.toMatchObject({
+      status: 503,
+      code: "engine_unavailable",
+    });
+  });
+
+  it("reports missing credentials as server misconfiguration", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(resolveCredential({}, "chirp3-hd")).rejects.toMatchObject({
+      status: 500,
+      code: "server_misconfigured",
+    });
   });
 });

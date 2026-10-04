@@ -2,7 +2,7 @@
 
 French-first text-to-speech web tool backed by Google Cloud Text-to-Speech, running entirely on a single Cloudflare Worker.
 
-- **Voices:** [Chirp 3: HD](https://docs.cloud.google.com/text-to-speech/docs/chirp3-hd) (default) and [Gemini-TTS](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts) (style prompts such as *"read slowly, like a storyteller"*).
+- **Voices:** [Chirp 3: HD](https://docs.cloud.google.com/text-to-speech/docs/chirp3-hd) (default) and, when a service account is configured, [Gemini-TTS](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts) (style prompts such as *"read slowly, like a storyteller"*).
 - **Language:** French (`fr-FR`) by default; ~50 languages on Chirp 3: HD and ~90 on Gemini-TTS.
 - **No sign-up:** anyone can use it. Google credentials stay on the server, and abuse is limited by Turnstile, per-IP rate limits, a length cap and a response cache.
 
@@ -66,6 +66,7 @@ Errors are returned as JSON: `{ "error": { "code": "...", "message": "..." } }`.
 | 422 | `synthesis_rejected` | Google refused the input. The message comes from Google, e.g. a sentence that is too long. |
 | 429 | `rate_limited` | Per-IP limit hit. Respect `Retry-After`. |
 | 500 | `server_misconfigured` | A secret is missing or invalid. Check the Worker logs. |
+| 503 | `engine_unavailable` | The requested engine has no usable credential on this server (Gemini-TTS without a service account). |
 | 502 / 503 | `upstream_*` | Google failed, rejected the credentials, or ran out of quota. |
 
 Example:
@@ -81,13 +82,34 @@ curl -X POST http://localhost:5173/api/tts \
 
 ### 1. Google Cloud
 
-1. Create or choose a project and link a billing account.
-2. Enable the **Cloud Text-to-Speech API**.
-3. Create a service account (IAM & Admin → Service Accounts) and grant it **Vertex AI User** (`roles/aiplatform.user`). The Gemini-TTS docs require this role (`aiplatform.endpoints.predict`). If Google still answers `PERMISSION_DENIED`, the Worker log line `Google TTS error 403 …` contains Google's exact message, including the missing permission.
-4. Create a JSON key for the service account (Keys → Add key → JSON) and keep the file somewhere safe.
-5. **Cost guardrails (strongly recommended for a public tool):**
-   - Billing → Budgets & alerts: create a budget with email alerts. Note that budgets *notify*; they do not stop spending.
-   - APIs & Services → Cloud Text-to-Speech API → Quotas: lower the per-minute request quotas (for example the Chirp 3 limit) to a level you are comfortable paying for. This is a hard cap.
+Create or choose a project and link a billing account, then enable the
+**Cloud Text-to-Speech API**.
+
+Which credential you need depends on which engines you want. This was
+established by testing against Google, not guessed:
+
+| Engine | Credential | Why |
+| --- | --- | --- |
+| Chirp 3: HD | **API key** (`GOOGLE_TTS_API_KEY`) | An ordinary Cloud TTS call. The key identifying the project is enough. |
+| Gemini-TTS | **Service account** (`GOOGLE_SERVICE_ACCOUNT_JSON`) | The request goes to the same endpoint, but Google routes it to Vertex AI and checks `aiplatform.endpoints.predict`. An API key only identifies a project, so it cannot hold that role: Google answers *"API keys are not supported by this API. Expected OAuth2 access token or other authentication credentials that assert a principal."* |
+
+**API key** (Chirp 3: HD): APIs & Services -> Credentials -> Create credentials
+-> API key. Restrict it to the Cloud Text-to-Speech API.
+
+**Service account** (adds Gemini-TTS): also enable the **Vertex AI API**
+(`aiplatform.googleapis.com`, shown as *Agent Platform* in the console). Then
+IAM & Admin -> Service Accounts -> create one, grant it **Vertex AI User**
+(`roles/aiplatform.user`), and create a JSON key (Keys -> Add key -> JSON).
+
+Without a service account, `POST /api/tts` with `"engine":"gemini"` returns
+`503 engine_unavailable`; Chirp 3: HD keeps working.
+
+**Cost guardrails (strongly recommended for a public tool):**
+
+- Billing -> Budgets & alerts: create a budget with email alerts. Budgets
+  *notify*; they do not stop spending.
+- APIs & Services -> Cloud Text-to-Speech API -> Quotas: lower the per-minute
+  request quotas to a level you are comfortable paying for. This is a hard cap.
 
 ### 2. Cloudflare
 
@@ -101,7 +123,10 @@ npx wrangler kv namespace create tts-studio-cache
 # for your domain. The site key goes into the frontend; the secret key goes here:
 npx wrangler secret put TURNSTILE_SECRET_KEY
 
-# Google credentials: paste the whole JSON key file content when prompted
+# Google credentials: the API key covers Chirp 3: HD
+npx wrangler secret put GOOGLE_TTS_API_KEY
+
+# Only if you want Gemini-TTS: paste the whole JSON key file content
 npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
 
 npm run deploy
@@ -125,7 +150,7 @@ The rate limit (10 requests per 60 s per IP) is set under `ratelimits` in `wrang
 
 ```sh
 npm install
-cp .dev.vars.example .dev.vars   # then fill in GOOGLE_SERVICE_ACCOUNT_JSON
+cp .dev.vars.example .dev.vars   # then fill in GOOGLE_TTS_API_KEY
 npm run dev                      # http://localhost:5173 (runs in workerd, with local KV and rate limiter)
 npm test                         # unit + API tests (Google, Turnstile and KV are faked)
 npm run typecheck
@@ -135,7 +160,7 @@ In `.dev.vars`, wrap the service account JSON in **single quotes** on one line. 
 
 ## Security and cost model
 
-- The Google key exists only as a Worker secret. The browser talks only to `/api/*` on this domain, and the Worker calls Google, so the key is never sent to the client.
+- Google credentials exist only as Worker secrets. The browser talks only to `/api/*` on this domain, and the Worker calls Google, so the key is never sent to the client.
 - The real risk for a public tool is someone calling `/api/tts` directly to run up your bill. The layers against that are:
   1. Turnstile on every synthesis request (invisible to most humans, blocks scripts).
   2. A per-IP rate limit.
@@ -153,7 +178,7 @@ server/request.ts      Request validation and defaults (zod)
 server/catalog.ts      Engines, voices, languages, models
 server/config.ts       Bindings and vars
 server/protection.ts   Rate limiting and Turnstile
-server/google/auth.ts  Service-account JWT → OAuth token (WebCrypto, cached)
+server/google/auth.ts  Per-engine credential: API key, or service-account JWT → OAuth token (WebCrypto, cached)
 server/google/tts.ts   Google request bodies and error mapping
 server/lib/chunk.ts    Sentence-aware splitting by UTF-8 byte budget
 server/lib/audio.ts    MP3/WAV concatenation

@@ -1,7 +1,7 @@
 import type { GeminiModel } from "../catalog";
 import { ApiError } from "../errors";
 import { base64ToBytes } from "../lib/base64";
-import { clearTokenCache } from "./auth";
+import { clearTokenCache, type Credential } from "./auth";
 
 export const AUDIO_FORMATS = {
   mp3: { encoding: "MP3", contentType: "audio/mpeg", extension: "mp3" },
@@ -78,11 +78,18 @@ async function toApiError(response: Response): Promise<ApiError> {
 export async function synthesizeChunk(
   text: string,
   options: SynthesisOptions,
-  context: { endpoint: string; accessToken: string },
+  context: { endpoint: string; credential: Credential },
 ): Promise<Uint8Array<ArrayBuffer>> {
-  const response = await fetch(`${context.endpoint}/v1/text:synthesize`, {
+  const { credential } = context;
+  const url = new URL(`${context.endpoint}/v1/text:synthesize`);
+  if (credential.kind === "apiKey") url.searchParams.set("key", credential.value);
+
+  const response = await fetch(url, {
     method: "POST",
-    headers: { authorization: `Bearer ${context.accessToken}`, "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(credential.kind === "bearer" ? { authorization: `Bearer ${credential.value}` } : {}),
+    },
     body: JSON.stringify(buildSynthesizeBody(text, options)),
   });
   if (!response.ok) throw await toApiError(response);
