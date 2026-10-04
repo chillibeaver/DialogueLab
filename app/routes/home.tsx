@@ -46,13 +46,18 @@ export function meta({ loaderData }: Route.MetaArgs) {
   ];
 }
 
+/**
+ * Runs at build time: the page is prerendered (react-router.config.ts), by a
+ * local preview of the Worker on localhost. The canonical address therefore
+ * comes from SITE_URL, not from the request.
+ */
 export function loader({ context, request }: Route.LoaderArgs) {
   const env = context.get(envContext);
   const url = new URL(request.url);
   return {
     catalog: buildCatalog(readConfig(env)),
     turnstileSiteKey: env.TURNSTILE_SITE_KEY ?? "",
-    siteUrl: `${url.origin}${url.pathname}`,
+    siteUrl: env.SITE_URL ? new URL(url.pathname, env.SITE_URL).href : `${url.origin}${url.pathname}`,
   };
 }
 

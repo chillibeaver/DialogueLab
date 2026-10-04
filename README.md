@@ -12,12 +12,28 @@ French-first text-to-speech web tool backed by Google Cloud Text-to-Speech, runn
 | --- | --- |
 | Runtime | Cloudflare Workers |
 | API | [Hono](https://hono.dev) under `/api/*` (`server/`) |
-| Pages | [React Router v8](https://reactrouter.com) framework mode with SSR (`app/`) |
+| Pages | [React Router v8](https://reactrouter.com) framework mode, home page prerendered at build time (`app/`) |
 | Build | Vite + `@cloudflare/vite-plugin` |
 | Styles | Tailwind CSS; every component is hand-written, no UI or component library |
 | Tests | Vitest (`test/`) |
 
 `workers/app.ts` is the Worker entry: requests to `/api/*` go to Hono, and everything else is server-rendered by React Router.
+
+The home page is the same for every visitor, since each one's scripts load
+from their own browser afterwards, so it is **prerendered at build time**
+(`prerender` in `react-router.config.ts`). The build starts a local preview of
+the Worker, renders `/` once, and writes `build/client/index.html`, which
+Cloudflare then serves as a static file: a page view never runs the Worker,
+costs no CPU time, and does not count against the Workers request quota. Only
+the API, `robots.txt`, `sitemap.xml`, `llms.txt` and unknown paths reach it.
+
+Two consequences:
+
+- **The page holds the vars it was built with.** Change one in `wrangler.jsonc`
+  and the next build picks it up; a local build also reads `.dev.vars`, so
+  deploy from CI, where there is none.
+- **Its canonical address comes from `SITE_URL`**, because the build renders it
+  on localhost.
 
 ## The reader
 
@@ -345,6 +361,7 @@ deploy, so `TURNSTILE_SITE_KEY` must be committed there.
 | `TURNSTILE_SITE_KEY` | — | Public Turnstile key, sent to the browser. Required in production: without it the reader sends no token and is refused. Leave it unset locally, with `TURNSTILE_DISABLED=true`. |
 | `API_DAILY_CHARS` | `200000` | Characters each clips API key may send to Google per UTC day (about US$6 on Chirp 3: HD). |
 | `SUBREQUEST_BUDGET` | `40` | Google calls plus KV and R2 operations one request may make. The free plan allows 50; on a paid plan use e.g. `9000`. |
+| `SITE_URL` | the request's origin | Canonical address, used for the home page's canonical link and `og:url` and for the sitemap. Set it: the home page is rendered at build time on localhost. |
 
 #### API keys and collaborators
 
@@ -405,7 +422,7 @@ In `.dev.vars`, wrap the service account JSON in **single quotes** on one line. 
 ## Project layout
 
 ```
-workers/app.ts         Worker entry: Hono /api + React Router SSR
+workers/app.ts         Worker entry: Hono /api + React Router (the home page is prerendered)
 server/api.ts          Routes
 server/clips.ts        Clips API: authenticated creation, public permanent URLs
 server/keys.ts         API keys (constant-time check)

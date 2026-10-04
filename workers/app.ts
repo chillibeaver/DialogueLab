@@ -16,9 +16,12 @@ const app = new Hono<{ Bindings: Bindings }>();
 // JSON API first; every other path is server-rendered by React Router.
 app.route("/api", api);
 
-// Built from the request host, so they stay correct on any domain.
+// The canonical origin (SITE_URL), matching the home page's canonical link;
+// without one, the request's own.
+const siteOrigin = (env: Bindings, url: string) => new URL(env.SITE_URL || url).origin;
+
 app.get("/robots.txt", (c) => {
-  const origin = new URL(c.req.url).origin;
+  const origin = siteOrigin(c.env, c.req.url);
   return c.text(`User-agent: *
 Allow: /
 Disallow: /api/
@@ -32,7 +35,7 @@ Sitemap: ${origin}/sitemap.xml
 app.get("/llms.txt", (c) => c.text(clipsGuide.replaceAll("https://tts.example.com", new URL(c.req.url).origin)));
 
 app.get("/sitemap.xml", (c) => {
-  const origin = new URL(c.req.url).origin;
+  const origin = siteOrigin(c.env, c.req.url);
   const body = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>${origin}/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>

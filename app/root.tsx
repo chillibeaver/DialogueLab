@@ -14,8 +14,9 @@ export const links: Route.LinksFunction = () => [
 ];
 
 /**
- * Describes the tool for search engines. The page is server-rendered, so this
- * and the content itself are in the HTML before any JavaScript runs.
+ * Describes the tool for search engines. The page is rendered to HTML (the home
+ * page at build time), so this and the content itself are there before any
+ * JavaScript runs.
  */
 const STRUCTURED_DATA = {
   "@context": "https://schema.org",

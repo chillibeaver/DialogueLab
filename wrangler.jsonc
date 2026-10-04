@@ -22,7 +22,11 @@
 		"API_DAILY_CHARS": "200000",
 		// Subrequests one request may make: Google calls and every KV or R2 operation.
 		// The Workers free plan allows 50; on a paid plan raise this to e.g. 9000.
-		"SUBREQUEST_BUDGET": "40"
+		"SUBREQUEST_BUDGET": "40",
+		// The site's canonical address, for the home page's canonical link and the
+		// sitemap. The home page is rendered at build time on localhost, so it
+		// cannot take this from the request. With a custom domain, put it here.
+		"SITE_URL": "https://tts-studio.edgebeaver.workers.dev"
 	},
 	// Secrets (set with `wrangler secret put`, or in .dev.vars locally):
 	//   GOOGLE_TTS_API_KEY           - API key, enough for Chirp 3: HD

@@ -31,6 +31,8 @@ export interface Bindings {
   API_DAILY_CHARS?: string;
   /** Subrequests (Google calls, KV and R2 operations) one request may make. */
   SUBREQUEST_BUDGET?: string;
+  /** Canonical origin, such as https://tts.example.org; the request's origin when unset. */
+  SITE_URL?: string;
 
   // Bindings (optional so the API degrades gracefully when one is missing)
   TTS_RATE_LIMITER?: RateLimit;
