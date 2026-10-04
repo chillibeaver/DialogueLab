@@ -1,62 +1,65 @@
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "tts-studio",
-	"compatibility_date": "2026-10-01",
-	"main": "./workers/app.ts",
-	"observability": {
-		"enabled": true
-	},
-	"vars": {
-		// Defaults applied when a request omits the field.
-		"DEFAULT_ENGINE": "chirp3-hd",
-		"DEFAULT_LANGUAGE": "fr-FR",
-		// Hard cap on characters per /api/tts request (cost control).
-		"MAX_CHARS": "5000",
-		// Regional endpoints (eu-, us-, northamerica-northeast1-) keep processing in
-		// that region but do not serve every model: only this global endpoint has
-		// gemini-3.1-flash-tts-preview. See README "Configuration".
-		"GOOGLE_TTS_ENDPOINT": "https://texttospeech.googleapis.com",
-		// How long synthesized audio stays in the KV cache (30 days).
-		"CACHE_TTL_SECONDS": "2592000",
-		// Characters each clips API key may send to Google per UTC day (about US$6 on Chirp 3: HD).
-		"API_DAILY_CHARS": "200000",
-		// Subrequests one request may make: Google calls and every KV or R2 operation.
-		// The Workers free plan allows 50; on a paid plan raise this to e.g. 9000.
-		"SUBREQUEST_BUDGET": "40",
-		// The site's canonical address, for the home page's canonical link and the
-		// sitemap. The home page is rendered at build time on localhost, so it
-		// cannot take this from the request. With a custom domain, put it here.
-		"SITE_URL": "https://tts-studio.edgebeaver.workers.dev"
-	},
-	// Secrets (set with `wrangler secret put`, or in .dev.vars locally):
-	//   GOOGLE_TTS_API_KEY           - API key, enough for Chirp 3: HD
-	//   GOOGLE_SERVICE_ACCOUNT_JSON  - service account key JSON; required for Gemini-TTS
-	//   TURNSTILE_SECRET_KEY         - Cloudflare Turnstile secret key
-	//   API_KEYS                     - clips API keys, "name:secret,name2:secret2"
-	"ratelimits": [
-		{
-			"name": "TTS_RATE_LIMITER",
-			"namespace_id": "1001",
-			// Per client IP, per Cloudflare location. Period must be 10 or 60.
-			"simple": { "limit": 10, "period": 60 }
-		}
-	],
-	"kv_namespaces": [
-		{
-			// Audio cache. Create with
-			// `npx wrangler kv namespace create tts-studio-cache --binding TTS_CACHE`,
-			// which adds its id here.
-			"binding": "TTS_CACHE",
-			"id": "9c230033fd644e0b92d5448ce85ea788"
-		}
-	],
-	"r2_buckets": [
-		{
-			// Published clips (POST /api/v1/clips): permanent audio behind public URLs.
-			// Create with `npx wrangler r2 bucket create tts-studio-clips --binding CLIPS`;
-			// without --binding, Wrangler offers to add a second binding to the same bucket.
-			"binding": "CLIPS",
-			"bucket_name": "tts-studio-clips"
-		}
-	]
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tts-studio",
+  "compatibility_date": "2026-10-01",
+  "main": "./workers/app.ts",
+  "observability": {
+    "enabled": true,
+  },
+  "vars": {
+    // Defaults applied when a request omits the field.
+    "DEFAULT_ENGINE": "chirp3-hd",
+    "DEFAULT_LANGUAGE": "fr-FR",
+    // Hard cap on characters per /api/tts request (cost control).
+    "MAX_CHARS": "5000",
+    // Regional endpoints (eu-, us-, northamerica-northeast1-) keep processing in
+    // that region but do not serve every model: only this global endpoint has
+    // gemini-3.1-flash-tts-preview. See README "Configuration".
+    "GOOGLE_TTS_ENDPOINT": "https://texttospeech.googleapis.com",
+    // How long synthesized audio stays in the KV cache (30 days).
+    "CACHE_TTL_SECONDS": "2592000",
+    // Characters each clips API key may send to Google per UTC day (about US$6 on Chirp 3: HD).
+    "API_DAILY_CHARS": "200000",
+    // Subrequests one request may make: Google calls and every KV or R2 operation.
+    // The Workers free plan allows 50; on a paid plan raise this to e.g. 9000.
+    "SUBREQUEST_BUDGET": "40",
+    // Public Turnstile site key (the secret key is a secret). The home page is
+    // prerendered, so a change here takes effect with the next build.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAFNwQCz7qdwf11cU",
+    // The site's canonical address, for the home page's canonical link and the
+    // sitemap. The home page is rendered at build time on localhost, so it
+    // cannot take this from the request. With a custom domain, put it here.
+    "SITE_URL": "https://tts-studio.edgebeaver.workers.dev",
+  },
+  // Secrets (set with `wrangler secret put`, or in .dev.vars locally):
+  //   GOOGLE_TTS_API_KEY           - API key, enough for Chirp 3: HD
+  //   GOOGLE_SERVICE_ACCOUNT_JSON  - service account key JSON; required for Gemini-TTS
+  //   TURNSTILE_SECRET_KEY         - Cloudflare Turnstile secret key
+  //   API_KEYS                     - clips API keys, "name:secret,name2:secret2"
+  "ratelimits": [
+    {
+      "name": "TTS_RATE_LIMITER",
+      "namespace_id": "1001",
+      // Per client IP, per Cloudflare location. Period must be 10 or 60.
+      "simple": { "limit": 10, "period": 60 },
+    },
+  ],
+  "kv_namespaces": [
+    {
+      // Audio cache. Create with
+      // `npx wrangler kv namespace create tts-studio-cache --binding TTS_CACHE`,
+      // which adds its id here.
+      "binding": "TTS_CACHE",
+      "id": "9c230033fd644e0b92d5448ce85ea788",
+    },
+  ],
+  "r2_buckets": [
+    {
+      // Published clips (POST /api/v1/clips): permanent audio behind public URLs.
+      // Create with `npx wrangler r2 bucket create tts-studio-clips --binding CLIPS`;
+      // without --binding, Wrangler offers to add a second binding to the same bucket.
+      "binding": "CLIPS",
+      "bucket_name": "tts-studio-clips",
+    },
+  ],
 }
