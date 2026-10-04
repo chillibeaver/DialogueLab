@@ -623,6 +623,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             >
               Loop
             </button>
+            <button
+              type="button"
+              aria-pressed={prefs.hide}
+              title="Blur every line; show one with its eye button, or by clicking it"
+              onClick={() => editPrefs((draft) => void (draft.hide = !draft.hide))}
+              className={toggleButton(prefs.hide)}
+            >
+              Blur
+            </button>
           </div>
         </div>
       </footer>

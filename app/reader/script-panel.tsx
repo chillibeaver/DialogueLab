@@ -65,6 +65,8 @@ function LineText({ text, range, color }: { text: string; range: [number, number
   return <>{parts}</>;
 }
 
+const NONE: ReadonlySet<string> = new Set();
+
 export function ScriptLines({
   reader,
   state,
@@ -80,7 +82,18 @@ export function ScriptLines({
 }) {
   const { script, prefs, editScript, toast } = reader;
   const [editing, setEditing] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
+  // Lines shown while the rest are blurred, or blurred while the rest show:
+  // the exceptions to "Blur", which turning it on or off clears.
+  const [exceptions, setExceptions] = useState<{ hide: boolean; ids: ReadonlySet<string> }>(() => ({
+    hide: prefs.hide,
+    ids: new Set(),
+  }));
+  const flipped = exceptions.hide === prefs.hide ? exceptions.ids : NONE;
+  function flip(id: string) {
+    const ids = new Set(flipped);
+    if (!ids.delete(id)) ids.add(id);
+    setExceptions({ hide: prefs.hide, ids });
+  }
   // Lines whose download is being prepared (synthesis can take a moment).
   const [downloading, setDownloading] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -143,7 +156,7 @@ export function ScriptLines({
         const speaker = speakerOf(script, line.sp);
         const active = state.line === index && state.status !== "idle";
         const cued = state.line === index && state.status === "idle";
-        const hidden = prefs.hide && !revealed.has(line.id);
+        const hidden = prefs.hide !== flipped.has(line.id);
 
         return (
           <div
@@ -197,7 +210,7 @@ export function ScriptLines({
                   role="button"
                   tabIndex={0}
                   aria-label={`Line ${index + 1}, press Enter to edit`}
-                  onClick={() => (hidden ? setRevealed(new Set(revealed).add(line.id)) : setEditing(line.id))}
+                  onClick={() => (hidden ? flip(line.id) : setEditing(line.id))}
                   onKeyDown={(e) => {
                     if (e.key !== "Enter") return;
                     e.preventDefault();
@@ -240,18 +253,11 @@ export function ScriptLines({
             </div>
 
             <div className="col-start-2 row-start-1 flex opacity-100 sm:col-start-3 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-              {prefs.hide && (
-                <IconButton
-                  label="Show or hide this line"
-                  path={ICONS.eye}
-                  onClick={() => {
-                    const next = new Set(revealed);
-                    if (next.has(line.id)) next.delete(line.id);
-                    else next.add(line.id);
-                    setRevealed(next);
-                  }}
-                />
-              )}
+              <IconButton
+                label={hidden ? "Show this line" : "Blur this line"}
+                path={hidden ? ICONS.eye : ICONS.eyeOff}
+                onClick={() => flip(line.id)}
+              />
               <IconButton label="Play this line only" path={ICONS.play} onClick={() => onPlayLine(index)} />
               <IconButton label="Play from this line" path={ICONS.from} onClick={() => onPlayFrom(index)} />
               <IconButton
