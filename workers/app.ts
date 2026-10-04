@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { createRequestHandler, RouterContextProvider } from "react-router";
 
+import clipsGuide from "../docs/clips-api.md?raw";
 import { envContext } from "../app/context";
 import { api } from "../server/api";
 import type { Bindings } from "../server/config";
@@ -25,6 +26,10 @@ Disallow: /api/
 Sitemap: ${origin}/sitemap.xml
 `);
 });
+
+// The clips API guide for AI agents, with this deployment's address filled in,
+// so a collaborator's agent can simply be told to read <site>/llms.txt.
+app.get("/llms.txt", (c) => c.text(clipsGuide.replaceAll("https://tts.example.com", new URL(c.req.url).origin)));
 
 app.get("/sitemap.xml", (c) => {
   const origin = new URL(c.req.url).origin;

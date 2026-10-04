@@ -74,16 +74,21 @@ export function stubFetch(overrides: { tts?: Handler; token?: Handler; turnstile
   };
 }
 
-/** Minimal in-memory stand-in for a KV namespace (only the methods the cache uses). */
+/** Minimal in-memory stand-in for a KV namespace (only the methods the cache and quotas use). */
 export function fakeKv() {
   const store = new Map<string, { value: ArrayBuffer; metadata: unknown; ttl?: number }>();
   const kv = {
+    async get(key: string) {
+      const entry = store.get(key);
+      return entry ? new TextDecoder().decode(entry.value) : null;
+    },
     async getWithMetadata(key: string) {
       const entry = store.get(key);
       return { value: entry?.value ?? null, metadata: entry?.metadata ?? null };
     },
-    async put(key: string, value: Uint8Array, options: { expirationTtl?: number; metadata?: unknown }) {
-      store.set(key, { value: value.slice().buffer, metadata: options.metadata, ttl: options.expirationTtl });
+    async put(key: string, value: Uint8Array | string, options: { expirationTtl?: number; metadata?: unknown } = {}) {
+      const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+      store.set(key, { value: bytes.slice().buffer, metadata: options.metadata, ttl: options.expirationTtl });
     },
   };
   return { kv: kv as unknown as KVNamespace, store };
@@ -122,4 +127,68 @@ export function baseEnv(serviceAccountJson: string, overrides: Partial<Bindings>
     CACHE_TTL_SECONDS: "2592000",
     ...overrides,
   };
+}
+
+interface StoredObject {
+  bytes: Uint8Array;
+  httpMetadata: { contentType?: string; cacheControl?: string };
+  customMetadata: Record<string, string>;
+  etag: string;
+}
+
+/**
+ * Minimal in-memory stand-in for an R2 bucket: head, put, and get with the
+ * Range and If-None-Match handling that audio playback relies on.
+ */
+export function fakeR2() {
+  const store = new Map<string, StoredObject>();
+  let version = 0;
+
+  const describe = (key: string, object: StoredObject) => ({
+    key,
+    size: object.bytes.length,
+    etag: object.etag,
+    httpEtag: `"${object.etag}"`,
+    httpMetadata: object.httpMetadata,
+    customMetadata: object.customMetadata,
+    writeHttpMetadata(headers: Headers) {
+      if (object.httpMetadata.contentType) headers.set("content-type", object.httpMetadata.contentType);
+      if (object.httpMetadata.cacheControl) headers.set("cache-control", object.httpMetadata.cacheControl);
+    },
+  });
+
+  const bucket = {
+    async head(key: string) {
+      const object = store.get(key);
+      return object ? describe(key, object) : null;
+    },
+    async put(key: string, value: Uint8Array, options: Partial<Pick<StoredObject, "httpMetadata" | "customMetadata">> = {}) {
+      store.set(key, {
+        bytes: new Uint8Array(value),
+        httpMetadata: options.httpMetadata ?? {},
+        customMetadata: options.customMetadata ?? {},
+        etag: `v${++version}`,
+      });
+      return describe(key, store.get(key)!);
+    },
+    async get(key: string, options: { range?: Headers; onlyIf?: Headers } = {}) {
+      const object = store.get(key);
+      if (!object) return null;
+      const meta = describe(key, object);
+      if (options.onlyIf?.get("if-none-match") === meta.httpEtag) return meta;
+
+      const match = /^bytes=(\d*)-(\d*)$/.exec(options.range?.get("range") ?? "");
+      if (!match) return { ...meta, body: object.bytes };
+      const size = object.bytes.length;
+      const start = match[1] ? Number(match[1]) : size - Number(match[2]);
+      const end = match[1] && match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
+      return {
+        ...meta,
+        // Like R2, report every field, with `suffix` present but undefined on an ordinary range.
+        range: match[1] ? { offset: start, length: end - start + 1, suffix: undefined } : { suffix: Number(match[2]) },
+        body: object.bytes.slice(start, end + 1),
+      };
+    },
+  };
+  return { bucket: bucket as unknown as R2Bucket, store };
 }

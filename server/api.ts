@@ -1,7 +1,8 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 
 import { buildCatalog } from "./catalog-view";
+import { clips } from "./clips";
 import { readConfig, type Bindings } from "./config";
 import { ApiError, errorResponse, handleError } from "./errors";
 import { resolveCredential, type Credential } from "./google/auth";
@@ -12,14 +13,10 @@ import { cacheKey, readCachedAudio, writeCachedAudio, type CachedAudioMeta } fro
 import { splitText } from "./lib/chunk";
 import { enforceRateLimit, verifyTurnstile } from "./protection";
 import { parseBatchRequest, parseTtsRequest } from "./request";
+import { CHUNK_BYTES, MAX_BODY_BYTES, mapWithConcurrency, runInBackground, SYNTHESIS_CONCURRENCY } from "./synthesis";
 
 type AppEnv = { Bindings: Bindings };
 
-/** Per-request text limits are 5,000 bytes (Chirp 3: HD) and 4,000 bytes (Gemini-TTS); keep a margin. */
-const CHUNK_BYTES = { "chirp3-hd": 4500, gemini: 3800 } as const;
-/** Parallel Google requests per synthesis (keeps well under subrequest and RPM limits). */
-const SYNTHESIS_CONCURRENCY = 4;
-const MAX_BODY_BYTES = 64 * 1024;
 
 export const api = new Hono<AppEnv>();
 api.onError(handleError);
@@ -149,6 +146,9 @@ api.post(
   },
 );
 
+// Clips: audio for pages built elsewhere, made once with an API key and served from permanent URLs.
+api.route("/v1", clips);
+
 // Unknown /api/* paths get a JSON 404 instead of falling through to the page renderer.
 api.all("*", () => {
   throw new ApiError(404, "not_found", "Unknown API endpoint.");
@@ -170,25 +170,4 @@ function audioResponse(
       "x-cache": cacheStatus,
     },
   });
-}
-
-function runInBackground(c: Context, task: Promise<unknown>): void {
-  try {
-    c.executionCtx.waitUntil(task);
-  } catch {
-    // No ExecutionContext (e.g. unit tests): the task still runs, just unawaited.
-  }
-}
-
-async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await fn(items[index]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
 }

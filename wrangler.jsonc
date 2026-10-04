@@ -17,12 +17,15 @@
 		// gemini-3.1-flash-tts-preview. See README "Configuration".
 		"GOOGLE_TTS_ENDPOINT": "https://texttospeech.googleapis.com",
 		// How long synthesized audio stays in the KV cache (30 days).
-		"CACHE_TTL_SECONDS": "2592000"
+		"CACHE_TTL_SECONDS": "2592000",
+		// Characters each clips API key may send to Google per UTC day (about US$6 on Chirp 3: HD).
+		"API_DAILY_CHARS": "200000"
 	},
 	// Secrets (set with `wrangler secret put`, or in .dev.vars locally):
 	//   GOOGLE_TTS_API_KEY           - API key, enough for Chirp 3: HD
 	//   GOOGLE_SERVICE_ACCOUNT_JSON  - service account key JSON; required for Gemini-TTS
 	//   TURNSTILE_SECRET_KEY         - Cloudflare Turnstile secret key
+	//   API_KEYS                     - clips API keys, "name:secret,name2:secret2"
 	"ratelimits": [
 		{
 			"name": "TTS_RATE_LIMITER",
@@ -36,6 +39,14 @@
 			// Audio cache. Create with `npx wrangler kv namespace create tts-studio-cache`
 			// and paste the returned id here before deploying.
 			"binding": "TTS_CACHE"
+		}
+	],
+	"r2_buckets": [
+		{
+			// Published clips (POST /api/v1/clips): permanent audio behind public URLs.
+			// Create with `npx wrangler r2 bucket create tts-studio-clips` before deploying.
+			"binding": "CLIPS",
+			"bucket_name": "tts-studio-clips"
 		}
 	]
 }

@@ -15,6 +15,11 @@ export interface Bindings {
 
   /** Public Turnstile site key. Safe to send to the browser; empty disables the widget. */
   TURNSTILE_SITE_KEY?: string;
+  /**
+   * Keys for the clips API, comma-separated, each "name:secret" (the name shows
+   * in logs and quotas, so each collaborator can get, and lose, their own).
+   */
+  API_KEYS?: string;
 
   // Plain vars (wrangler.jsonc)
   DEFAULT_ENGINE?: string;
@@ -22,10 +27,14 @@ export interface Bindings {
   MAX_CHARS?: string;
   GOOGLE_TTS_ENDPOINT?: string;
   CACHE_TTL_SECONDS?: string;
+  /** Characters each API key may send to Google per UTC day. */
+  API_DAILY_CHARS?: string;
 
   // Bindings (optional so the API degrades gracefully when one is missing)
   TTS_RATE_LIMITER?: RateLimit;
   TTS_CACHE?: KVNamespace;
+  /** Published clips: permanent audio files behind public URLs. */
+  CLIPS?: R2Bucket;
 }
 
 export interface Config {
@@ -34,6 +43,7 @@ export interface Config {
   maxChars: number;
   googleEndpoint: string;
   cacheTtlSeconds: number;
+  apiDailyChars: number;
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
@@ -50,5 +60,7 @@ export function readConfig(env: Bindings): Config {
     googleEndpoint: (env.GOOGLE_TTS_ENDPOINT || "https://texttospeech.googleapis.com").replace(/\/+$/, ""),
     // KV requires an expiration TTL of at least 60 seconds.
     cacheTtlSeconds: Math.max(60, positiveInt(env.CACHE_TTL_SECONDS, 2_592_000)),
+    // About US$6 a day on Chirp 3: HD, US$30 per million characters.
+    apiDailyChars: positiveInt(env.API_DAILY_CHARS, 200_000),
   };
 }

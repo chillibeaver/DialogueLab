@@ -70,7 +70,7 @@ export interface TtsRequest {
   options: SynthesisOptions;
 }
 
-function invalid(message: string, details?: unknown): ApiError {
+export function invalid(message: string, details?: unknown): ApiError {
   return new ApiError(400, "invalid_request", message, { details });
 }
 
@@ -82,11 +82,11 @@ export function unsupportedLanguage(engine: Engine, language: string): ApiError 
   );
 }
 
-const normalize = (value: string) => value.normalize("NFC").replace(/\r\n?/g, "\n").trim();
+export const normalize = (value: string) => value.normalize("NFC").replace(/\r\n?/g, "\n").trim();
 
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).length;
 
-function tooLong(characters: number, maxChars: number): ApiError {
+export function tooLong(characters: number, maxChars: number): ApiError {
   return new ApiError(413, "text_too_long", `text has ${characters} characters; the limit is ${maxChars}.`, {
     details: { characters, maxChars },
   });

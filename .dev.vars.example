@@ -22,3 +22,6 @@ GOOGLE_TTS_API_KEY=AIza...
 TURNSTILE_DISABLED=true
 # Or test the real check with Cloudflare's always-pass test secret:
 # TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+
+# Clips API keys, "name:secret" comma-separated (any random strings locally).
+API_KEYS=local:change-me

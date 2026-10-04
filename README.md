@@ -69,6 +69,33 @@ are correct on whatever domain the Worker is deployed to.
 
 ## API
 
+### Clips: audio for other sites
+
+`POST /api/v1/clips` and `GET /api/v1/clips/<id>.mp3` give pages built
+elsewhere, such as a course's HTML exercises, permanent audio URLs. The full
+guide, written for the AI agents that build those pages, is
+[docs/clips-api.md](docs/clips-api.md); a deployment serves it at `/llms.txt`
+with its own address filled in.
+
+- **Made once, with a key.** `POST /api/v1/clips` takes up to 100 sentences or
+  whole dialogues (`turns`, joined into one clip) and returns a URL for each. It
+  needs `Authorization: Bearer <key>` and no Turnstile, since a page on another
+  site could never pass a Turnstile check bound to this one.
+- **Played forever, without one.** `GET /api/v1/clips/<id>.mp3` is public, has
+  open CORS, supports byte ranges (Safari needs them to play audio), is cached
+  by browsers for a year, and **never calls Google**. The key therefore never
+  has to appear in a page, and replaying costs nothing.
+- **Same input, same URL.** A clip's id hashes everything that shapes its
+  sound, so asking again is free (`created: false`). A line the reader already
+  synthesized is reused from the KV cache.
+- **Bounded.** One request makes at most 40 new clips, within the Workers
+  subrequest limit; the rest return `pending` and are finished by repeating the
+  request. Each key has a daily character budget (`API_DAILY_CHARS`) and its
+  own rate limit.
+
+Clips live in R2 without expiry. Unlike the 30-day synthesis cache, a published
+exercise must keep working.
+
 ### `GET /api/health`
 
 `{ "ok": true }`
@@ -180,10 +207,12 @@ Errors are returned as JSON: `{ "error": { "code": "...", "message": "..." } }`.
 | Status | `code` | Meaning |
 | --- | --- | --- |
 | 400 | `invalid_request`, `invalid_json`, `unsupported_language`, `unknown_voice` | Fix the request. |
+| 401 | `unauthorized` | Clips API: missing or wrong API key. |
 | 403 | `turnstile_required`, `turnstile_failed` | Get a fresh Turnstile token. |
 | 413 | `text_too_long`, `text_too_long_for_format`, `payload_too_large` | Shorten the text or use `mp3`/`wav`. |
 | 422 | `synthesis_rejected` | Google refused the input. The message comes from Google, e.g. a sentence that is too long. |
-| 429 | `rate_limited` | Per-IP limit hit. Respect `Retry-After`. |
+| 429 | `rate_limited` | Per-IP (or per-key) limit hit. Respect `Retry-After`. |
+| 429 | `quota_exceeded` | Clips API: the key's daily characters are spent; `details.resetsAt` says when they renew. |
 | 500 | `server_misconfigured` | A secret is missing or invalid. Check the Worker logs. |
 | 503 | `engine_unavailable` | The requested engine has no usable credential on this server (Gemini-TTS without a service account). |
 | 502 / 503 | `upstream_*` | Google failed, rejected the credentials, or ran out of quota. |
@@ -248,6 +277,12 @@ npx wrangler secret put GOOGLE_TTS_API_KEY
 # Only if you want Gemini-TTS: paste the whole JSON key file content
 npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
 
+# Clips API: storage for published clips, and one key per collaborator.
+# Generate each key with e.g. `openssl rand -hex 24`, then enter
+# "name:key,name2:key2" when prompted. Remove an entry to revoke that person.
+npx wrangler r2 bucket create tts-studio-clips
+npx wrangler secret put API_KEYS
+
 npm run deploy
 ```
 
@@ -263,6 +298,7 @@ Without `TURNSTILE_SECRET_KEY`, `/api/tts` refuses every request (it fails close
 | `GOOGLE_TTS_ENDPOINT` | `https://texttospeech.googleapis.com` | Regional endpoint. See the caveat below before changing it. |
 | `CACHE_TTL_SECONDS` | `2592000` (30 days) | How long synthesized audio stays in KV. |
 | `TURNSTILE_SITE_KEY` | — | Public Turnstile key. Sent to the browser; leave unset to skip the widget. |
+| `API_DAILY_CHARS` | `200000` | Characters each clips API key may send to Google per UTC day (about US$6 on Chirp 3: HD). |
 
 A regional endpoint such as `https://eu-texttospeech.googleapis.com` keeps
 processing in that region, but regions do not carry every model: only the
@@ -302,6 +338,8 @@ In `.dev.vars`, wrap the service account JSON in **single quotes** on one line. 
 ```
 workers/app.ts         Worker entry: Hono /api + React Router SSR
 server/api.ts          Routes
+server/clips.ts        Clips API: authenticated creation, public permanent URLs
+server/keys.ts         API keys (constant-time check)
 server/request.ts      Request validation and defaults (zod), including dialogue rules
 server/catalog.ts      Engines, voices, languages, models
 server/config.ts       Bindings and vars
