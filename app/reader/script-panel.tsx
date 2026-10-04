@@ -72,35 +72,27 @@ function LineText({ text, range, color }: { text: string; range: [number, number
   return <>{parts}</>;
 }
 
-const NONE: ReadonlySet<string> = new Set();
-
 export function ScriptLines({
   reader,
   state,
+  isHidden,
+  onFlip,
   onPlayLine,
   onPlayFrom,
   onDownloadLine,
 }: {
   reader: Reader;
   state: PlayerState;
+  /** Whether a line is blurred, its speaker's name included. */
+  isHidden: (id: string) => boolean;
+  /** Blurs a line, or shows it. */
+  onFlip: (id: string) => void;
   onPlayLine: (index: number) => void;
   onPlayFrom: (index: number) => void;
   onDownloadLine: (index: number) => Promise<void>;
 }) {
   const { script, prefs, editScript, toast } = reader;
   const [editing, setEditing] = useState<string | null>(null);
-  // Lines shown while the rest are blurred, or blurred while the rest show:
-  // the exceptions to "Blur", which turning it on or off clears.
-  const [exceptions, setExceptions] = useState<{ hide: boolean; ids: ReadonlySet<string> }>(() => ({
-    hide: prefs.hide,
-    ids: new Set(),
-  }));
-  const flipped = exceptions.hide === prefs.hide ? exceptions.ids : NONE;
-  function flip(id: string) {
-    const ids = new Set(flipped);
-    if (!ids.delete(id)) ids.add(id);
-    setExceptions({ hide: prefs.hide, ids });
-  }
   // Lines whose download is being prepared (synthesis can take a moment).
   const [downloading, setDownloading] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -163,7 +155,9 @@ export function ScriptLines({
         const speaker = speakerOf(script, line.sp);
         const active = state.line === index && state.status !== "idle";
         const cued = state.line === index && state.status === "idle";
-        const hidden = prefs.hide !== flipped.has(line.id);
+        const hidden = isHidden(line.id);
+        // A blurred line keeps its speaker anonymous: no colour of theirs either.
+        const color = hidden ? "var(--color-muted)" : speaker.color;
 
         return (
           <div
@@ -172,15 +166,22 @@ export function ScriptLines({
             className={`group relative grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 rounded-r-lg border-l-4 py-2.5 pl-3 pr-2 sm:grid-cols-[132px_minmax(0,1fr)_auto] sm:gap-x-6 ${
               active ? "bg-now" : "hover:bg-soft"
             }`}
-            style={{ borderLeftColor: active || cued ? speaker.color : "transparent" }}
+            style={{ borderLeftColor: active || cued ? color : "transparent" }}
           >
-            <div className="flex items-center gap-1 pt-0.5 sm:flex-col sm:items-start">
+            {/* Blurred with the line, so the name does not give the speaker away; a click shows both. */}
+            <div
+              className={`flex items-center gap-1 pt-0.5 sm:flex-col sm:items-start ${hidden ? "cursor-pointer" : ""}`}
+              onClick={hidden ? () => onFlip(line.id) : undefined}
+            >
               <select
                 value={line.sp}
                 aria-label={`Who says line ${index + 1}`}
+                tabIndex={hidden ? -1 : undefined}
                 onChange={(e) => editScript((draft) => void (draft.lines[index].sp = e.target.value))}
-                className="speaker-text max-w-full truncate rounded border-0 bg-transparent px-1 py-0.5 text-sm font-semibold focus:outline-none"
-                style={{ "--speaker": speaker.color } as React.CSSProperties}
+                className={`speaker-text max-w-full truncate rounded border-0 bg-transparent px-1 py-0.5 text-sm font-semibold focus:outline-none ${
+                  hidden ? "pointer-events-none select-none blur-[5px]" : ""
+                }`}
+                style={{ "--speaker": color } as React.CSSProperties}
               >
                 {script.speakers.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -217,7 +218,7 @@ export function ScriptLines({
                   role="button"
                   tabIndex={0}
                   aria-label={`Line ${index + 1}, press Enter to edit`}
-                  onClick={() => (hidden ? flip(line.id) : setEditing(line.id))}
+                  onClick={() => (hidden ? onFlip(line.id) : setEditing(line.id))}
                   onKeyDown={(e) => {
                     if (e.key !== "Enter") return;
                     e.preventDefault();
@@ -228,7 +229,7 @@ export function ScriptLines({
                   } ${hidden ? "select-none blur-[7px]" : ""}`}
                 >
                   {line.text ? (
-                    <LineText text={line.text} range={active ? state.range : null} color={speaker.color} />
+                    <LineText text={line.text} range={active ? state.range : null} color={color} />
                   ) : (
                     <span className="text-muted">(empty, click to edit)</span>
                   )}
@@ -251,7 +252,7 @@ export function ScriptLines({
                   <i
                     className="h-1 flex-1 origin-left rounded"
                     style={{
-                      backgroundColor: speaker.color,
+                      backgroundColor: color,
                       animation: `shrink ${Math.round(state.waiting.ms)}ms linear forwards`,
                     }}
                   />
@@ -263,7 +264,7 @@ export function ScriptLines({
               <IconButton
                 label={hidden ? "Show this line" : "Blur this line"}
                 path={hidden ? ICONS.eye : ICONS.eyeOff}
-                onClick={() => flip(line.id)}
+                onClick={() => onFlip(line.id)}
               />
               <IconButton label="Play this line only" path={ICONS.play} onClick={() => onPlayLine(index)} />
               <IconButton label="Play from this line" path={ICONS.from} onClick={() => onPlayFrom(index)} />

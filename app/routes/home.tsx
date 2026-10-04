@@ -33,6 +33,7 @@ const DESCRIPTION =
   "practice: repeat a line, leave a gap to shadow it, blur the text for dictation, and export the scene as one MP3. " +
   "French first, 50+ languages, no sign-up.";
 const SOURCE_URL = "https://github.com/chillibeaver/DialogueLab";
+const NO_LINES: ReadonlySet<string> = new Set();
 
 export function meta({ loaderData }: Route.MetaArgs) {
   const url = loaderData?.siteUrl;
@@ -162,6 +163,20 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   const prefs = store.prefs;
   const script = store.scripts[prefs.currentId ?? ""] ?? Object.values(store.scripts)[0];
+
+  // Lines shown while the rest are blurred, or blurred while the rest show:
+  // the exceptions to Blur, which turning it on or off clears.
+  const [blurExceptions, setBlurExceptions] = useState<{ hide: boolean; ids: ReadonlySet<string> }>(() => ({
+    hide: prefs.hide,
+    ids: new Set(),
+  }));
+  const flippedLines = blurExceptions.hide === prefs.hide ? blurExceptions.ids : NO_LINES;
+  const isHidden = (id: string) => prefs.hide !== flippedLines.has(id);
+  function flipLine(id: string) {
+    const ids = new Set(flippedLines);
+    if (!ids.delete(id)) ids.add(id);
+    setBlurExceptions({ hide: prefs.hide, ids });
+  }
 
   useEffect(() => {
     const root = document.documentElement;
@@ -393,6 +408,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   }, 0);
 
   const currentSpeaker = state.line >= 0 ? speakerOf(script, script.lines[state.line]?.sp ?? "") : null;
+  // A blurred line's speaker goes unnamed in the status too, and the dot loses their colour.
+  const currentHidden = state.line >= 0 && !!script.lines[state.line] && isHidden(script.lines[state.line].id);
   const collapsed = prefs.sideCollapsed;
 
   return (
@@ -497,6 +514,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             <ScriptLines
               reader={reader}
               state={state}
+              isHidden={isHidden}
+              onFlip={flipLine}
               onPlayLine={(index) => {
                 player.unlock();
                 void player.play(index, true);
@@ -545,13 +564,13 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-2.5 text-sm">
             <span
               className="h-3 w-3 shrink-0 rounded-full"
-              style={{ backgroundColor: currentSpeaker?.color ?? "var(--color-rule)" }}
+              style={{ backgroundColor: currentSpeaker && !currentHidden ? currentSpeaker.color : "var(--color-rule)" }}
             />
             <span className="truncate">
               {state.status === "loading"
                 ? `Synthesizing… ${state.pending} to go`
                 : currentSpeaker
-                  ? `${state.status === "paused" ? "Paused. " : ""}${currentSpeaker.name}, line ${state.line + 1} of ${script.lines.length}`
+                  ? `${state.status === "paused" ? "Paused. " : ""}${currentHidden ? "Line" : `${currentSpeaker.name}, line`} ${state.line + 1} of ${script.lines.length}`
                   : script.lines.length
                     ? `${script.lines.length} lines. Press Space to start`
                     : "The script is empty"}
