@@ -6,7 +6,7 @@ import { mergeIntoScript, parseScriptText, serializeScript } from "./format";
 import { clone, isNarrator, speakerOf, uid, type Line } from "./model";
 import type { Reader } from "./panels";
 import type { PlayerState } from "./player";
-import { lineFileName, PAUSE_RE, stripPauses } from "./text";
+import { PAUSE_RE, stripPauses } from "./text";
 import { BTN, BTN_PRIMARY, Code, Diagnostics, IconButton, ICONS, jumpToLine, Note } from "./ui";
 
 /**
@@ -255,11 +255,7 @@ export function ScriptLines({
               <IconButton label="Play this line only" path={ICONS.play} onClick={() => onPlayLine(index)} />
               <IconButton label="Play from this line" path={ICONS.from} onClick={() => onPlayFrom(index)} />
               <IconButton
-                label={
-                  downloading.has(line.id)
-                    ? "Preparing the download…"
-                    : `Download this line as ${lineFileName(line.text, index)}`
-                }
+                label={downloading.has(line.id) ? "Preparing the download…" : "Download this line"}
                 path={ICONS.download}
                 disabled={downloading.has(line.id) || !stripPauses(line.text).trim()}
                 onClick={() => downloadLine(index)}
