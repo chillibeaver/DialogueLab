@@ -39,7 +39,6 @@
       --color-now: #2b2a1d;
       --color-mark: #8c6f0e;
       --color-danger: #e07a76;
-      color-scheme: dark;
     }
   }
 
@@ -55,18 +54,66 @@
     --color-now: #2b2a1d;
     --color-mark: #8c6f0e;
     --color-danger: #e07a76;
-    color-scheme: dark;
-  }
-
-  :root[data-theme="light"] {
-    color-scheme: light;
   }
 }
 
 :root {
   --toph: 61px;
   --tbh: 90px;
+}
+
+/*
+ * color-scheme decides how native parts render: scrollbars, the open list of a
+ * <select>, checkboxes. It is set here, outside any layer, on purpose: a
+ * declaration outside a layer always beats one inside it, so splitting it
+ * between the two left every native control light even in the dark theme.
+ */
+:root {
   color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/*
+ * Scrollbars drawn from the theme tokens. scrollbar-color is inherited, so
+ * setting it on the root reaches every scroll container; Chrome and Firefox use
+ * these two properties, and Safari, which lacks them, uses the rules below.
+ */
+:root {
+  scrollbar-color: color-mix(in srgb, var(--color-muted) 45%, transparent) transparent;
+}
+
+* {
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background-color: color-mix(in srgb, var(--color-muted) 45%, transparent);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-muted);
 }
 
 html {

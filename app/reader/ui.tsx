@@ -98,31 +98,65 @@ export function Code({ children }: { children: ReactNode }) {
   return <code className="rounded bg-soft px-1.5 py-0.5 text-[0.9em]">{children}</code>;
 }
 
+/**
+ * A segmented control used for every tab bar. It never scrolls: the labels are
+ * short enough to fit the sidebar, and a scroll container here produced stray
+ * scrollbars (overflow on one axis forces the other to scroll too).
+ */
 export function Tabs<T extends string>({
   tabs,
   active,
   onSelect,
+  stretch = false,
+  label,
 }: {
   tabs: [T, string][];
   active: T;
   onSelect: (tab: T) => void;
+  /** Fill the width, for the sidebar; otherwise the control fits its labels. */
+  stretch?: boolean;
+  label: string;
 }) {
+  function onKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const next = tabs[(index + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length][0];
+    onSelect(next);
+    const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("[role=tab]");
+    buttons?.[tabs.findIndex(([id]) => id === next)]?.focus();
+  }
+
   return (
-    <div role="tablist" className="mb-4 flex gap-1 overflow-x-auto border-b border-rule">
-      {tabs.map(([id, label]) => (
-        <button
-          key={id}
-          role="tab"
-          type="button"
-          aria-selected={active === id}
-          onClick={() => onSelect(id)}
-          className={`-mb-px whitespace-nowrap border-b-2 px-2.5 py-2 ${
-            active === id ? "border-current font-semibold" : "border-transparent text-muted hover:text-ink"
-          }`}
-        >
-          {label}
-        </button>
-      ))}
+    <div
+      role="tablist"
+      aria-label={label}
+      className={`mb-4 rounded-lg border border-rule bg-surface p-0.5 ${stretch ? "flex" : "inline-flex"}`}
+    >
+      {tabs.map(([id, text], index) => {
+        const selected = active === id;
+        // A divider sits between two unselected tabs; the selected pill needs none.
+        const divider = index > 0 && !selected && tabs[index - 1][0] !== active;
+        return (
+          <button
+            key={id}
+            role="tab"
+            type="button"
+            aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onSelect(id)}
+            onKeyDown={(event) => onKeyDown(event, index)}
+            className={`relative min-w-0 truncate rounded-md px-2.5 py-1.5 text-sm transition-colors ${
+              stretch ? "flex-auto" : ""
+            } ${selected ? "bg-ink font-semibold text-surface" : "text-muted hover:bg-soft hover:text-ink"} ${
+              divider
+                ? "before:absolute before:inset-y-2 before:left-0 before:w-px before:bg-rule before:content-['']"
+                : ""
+            }`}
+          >
+            {text}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -180,3 +214,63 @@ export const ICONS = {
   sidebar: "M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v12h4V6zm6 0v12h8V6z",
   download: "M11 5h2v7h4l-5 5-5-5h4zM5 18h14v2H5z",
 };
+
+/** Selects a 1-based line in a textarea and scrolls it into view. */
+export function jumpToLine(area: HTMLTextAreaElement | null, line: number): void {
+  if (!area) return;
+  const rows = area.value.split("\n");
+  const start = rows.slice(0, line - 1).reduce((offset, row) => offset + row.length + 1, 0);
+  area.focus();
+  area.setSelectionRange(start, start + (rows[line - 1]?.length ?? 0));
+  const height = parseFloat(getComputedStyle(area).lineHeight) || 20;
+  area.scrollTop = Math.max(0, (line - 3) * height);
+}
+
+/**
+ * Problems found in a script text, by line. Errors block the import or the
+ * change; notes are worth a look but do not. Clicking a row jumps to its line.
+ */
+export function Diagnostics({
+  errors,
+  warnings,
+  onJump,
+  limit = 50,
+}: {
+  errors: { line: number; message: string }[];
+  warnings: { line: number; message: string }[];
+  onJump?: (line: number) => void;
+  limit?: number;
+}) {
+  if (!errors.length && !warnings.length) return null;
+  const rows = [
+    ...errors.map((d) => ({ ...d, error: true })),
+    ...warnings.map((d) => ({ ...d, error: false })),
+  ];
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+  return (
+    <div className="rounded-lg border border-rule bg-surface text-sm" role={errors.length ? "alert" : "status"}>
+      <p className={`border-b border-rule px-3 py-2 font-semibold ${errors.length ? "text-danger" : ""}`}>
+        {errors.length ? plural(errors.length, "problem to fix", "problems to fix") : "No problems"}
+        {warnings.length ? <span className="font-normal text-muted">, {plural(warnings.length, "note", "notes")}</span> : null}
+      </p>
+      <ul className="max-h-48 overflow-auto py-1">
+        {rows.slice(0, limit).map((d, index) => (
+          <li key={index}>
+            <button
+              type="button"
+              onClick={() => onJump?.(d.line)}
+              className="flex w-full gap-3 px-3 py-1 text-left hover:bg-soft"
+            >
+              <span className={`w-16 shrink-0 tabular-nums ${d.error ? "text-danger" : "text-muted"}`}>
+                Line {d.line}
+              </span>
+              <span className={d.error ? "" : "text-muted"}>{d.message}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {rows.length > limit && <p className="px-3 pb-2 text-muted">and {rows.length - limit} more</p>}
+    </div>
+  );
+}

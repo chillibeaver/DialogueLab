@@ -1,0 +1,61 @@
+#tts-studio 1
+# A sample pack: one item of each kind. Lines starting with # are comments.
+# This file is imported by the test suite and must stay free of errors and warnings.
+
+@lang fr-FR
+
+## Au café
+@id cafe-01
+@speaker Serveur: male
+@speaker Claire: female
+
+Serveur: Bonjour madame, qu'est-ce que je vous sers ?
+> Good morning, madam. What can I get you?
+Claire: Bonjour ! Un café crème et un croissant, s'il vous plaît.
+> Hello! A white coffee and a croissant, please.
+Serveur: Sur place ou à emporter ?
+> For here or to take away?
+Claire: Sur place. [1] Est-ce que vous avez le wifi ?
+> For here. Do you have wifi?
+Serveur: Bien sûr. Le code est sur le ticket.
+> Of course. The code is on the receipt.
+
+## Annonce en gare
+@id gare-01
+@speaker Annonce: female Kore
+
+Mesdames et messieurs, le train à destination de Lyon partira voie 5.
+> Ladies and gentlemen, the train to Lyon will leave from platform 5.
+Attention : le quai est glissant.
+> Caution: the platform is slippery.
+
+## Phrases utiles
+@id phrases-01
+
+Je voudrais réserver une table pour deux.
+> I would like to book a table for two.
+Où se trouve la gare, s'il vous plaît ?
+> Where is the station, please?
+L'addition, s'il vous plaît.
+> The bill, please.
+
+## Dictée 1
+@id dictee-01
+
+Il fait beau aujourd'hui, mais demain il va pleuvoir.
+> It is nice today, but tomorrow it is going to rain.
+
+## Le rendez-vous manqué
+@id rdv-01
+@engine gemini
+@speaker Léa: female Leda
+@speaker Paul: male
+@direction Léa: agacée, parle vite
+@direction Paul: penaud, hésitant
+
+Léa: Tu avais dit dix-neuf heures. Il est presque vingt heures !
+> You said seven o'clock. It's nearly eight!
+Paul: [sigh] Je sais, je suis désolé. Le métro était bloqué.
+> I know, I'm sorry. The metro was stuck.
+Léa: Tu aurais pu m'envoyer un message.
+> You could have sent me a message.

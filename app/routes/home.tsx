@@ -20,8 +20,10 @@ import {
 import { CastPanel, DictionaryPanel, LibraryPanel, PlaybackPanel, type Reader } from "../reader/panels";
 import { IDLE_STATE, Player, type PlayerState } from "../reader/player";
 import { BulkText, ScriptLines } from "../reader/script-panel";
-import { estimateMs, formatDuration, parseScriptText, safeFileName, scriptToText } from "../reader/text";
-import { BTN, Icon, IconButton, ICONS } from "../reader/ui";
+import { serializePack } from "../reader/format";
+import { ImportDialog } from "../reader/import-dialog";
+import { estimateMs, formatDuration, safeFileName } from "../reader/text";
+import { BTN, Icon, IconButton, ICONS, Tabs } from "../reader/ui";
 import type { Route } from "./+types/home";
 
 const TITLE = "TTS Studio — read dialogue aloud with Google Cloud voices";
@@ -116,6 +118,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const [sideOpen, setSideOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<{ text: string; undo?: () => void } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   // The saved library replaces the seed only after hydration, so the first
   // client render still matches the HTML the server sent.
@@ -251,49 +254,26 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     );
   }
 
-  function importText(text: string, nameHint: string) {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-
-    try {
-      const data = JSON.parse(trimmed) as Partial<Script>;
-      if (Array.isArray(data.lines) && Array.isArray(data.speakers) && data.speakers.length) {
-        const imported = clone(data) as Script;
-        imported.id = uid();
-        imported.updated = Date.now();
-        imported.engine = imported.engine === "gemini" ? "gemini" : "chirp3-hd";
-        imported.model ||= catalog.engines.gemini.defaultModel;
-        imported.speakers.forEach((sp, index) => {
-          sp.prompt ??= "";
-          sp.rate ||= 1;
-          sp.volume ??= 1;
-          sp.mode = sp.mode === "skip" ? "skip" : "speak";
-          if (!catalog.voices.some((v) => v.name === sp.voice)) sp.voice = voiceNames[index % voiceNames.length];
-        });
-        editStore((draft) => {
-          draft.scripts[imported.id] = imported;
-          draft.prefs.currentId = imported.id;
-        });
-        toast(`Imported “${imported.title}”`);
-        return;
-      }
-    } catch {
-      // Not JSON: treat it as a plain `Name: line` script.
-    }
-
-    const created = makeScript(nameHint || "Imported script", script.lang, script.engine, script.model, [], voiceNames);
-    created.speakers = [];
-    created.lines = parseScriptText(trimmed, created, prefs.narrMode);
-    created.speakers.forEach((sp, index) => (sp.voice ||= voiceNames[index % voiceNames.length]));
-    if (!created.lines.length) {
-      toast("Nothing to import");
-      return;
-    }
+  /** Adds imported scripts; one whose id is already in the library replaces it. Undoable. */
+  function importScripts(scripts: Script[]) {
+    if (!scripts.length) return;
+    const before = clone(store);
+    const replaced = scripts.filter((s) => store.scripts[s.id]).length;
+    player.stop();
     editStore((draft) => {
-      draft.scripts[created.id] = created;
-      draft.prefs.currentId = created.id;
+      for (const s of scripts) draft.scripts[s.id] = s;
+      draft.prefs.currentId = scripts[0].id;
     });
-    toast(`Imported ${created.lines.length} ${created.lines.length === 1 ? "line" : "lines"}`);
+    setImportOpen(false);
+    const added = scripts.length - replaced;
+    const parts = [added && `added ${added}`, replaced && `updated ${replaced}`].filter(Boolean).join(", ");
+    toast(`Import done: ${parts}`, () => setStore(before));
+  }
+
+  function exportText(name: string, scripts: Script[]) {
+    const empty = scripts.filter((s) => !s.lines.some((l) => l.text.trim())).length;
+    download(name, new Blob([serializePack(scripts, catalog)], { type: "text/plain;charset=utf-8" }));
+    if (empty) toast(`Left out ${empty} empty ${empty === 1 ? "script" : "scripts"}`);
   }
 
   async function exportAudio() {
@@ -342,7 +322,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     function onKey(event: KeyboardEvent) {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, select, [contenteditable]")) return;
+      if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
 
       if (event.key === " ") {
         if (target?.tagName === "BUTTON") return;
@@ -415,22 +395,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             sideOpen ? "translate-x-0" : "-translate-x-[105%]"
           } ${collapsed ? "md:hidden" : ""}`}
         >
-          <div role="tablist" className="mb-4 flex overflow-x-auto border-b border-rule">
-            {SIDE_TABS.map(([id, label]) => (
-              <button
-                key={id}
-                role="tab"
-                type="button"
-                aria-selected={sideTab === id}
-                onClick={() => setSideTab(id)}
-                className={`-mb-px whitespace-nowrap border-b-2 px-[7px] py-2 ${
-                  sideTab === id ? "border-current font-semibold" : "border-transparent text-muted hover:text-ink"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <Tabs tabs={SIDE_TABS} active={sideTab} onSelect={setSideTab} stretch label="Settings" />
 
           {sideTab === "cast" && <CastPanel reader={reader} />}
           {sideTab === "play" && <PlaybackPanel reader={reader} />}
@@ -441,17 +406,18 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               onNew={newScript}
               onDuplicate={duplicateScript}
               onDelete={deleteScript}
-              onImport={importText}
+              onImport={() => setImportOpen(true)}
+              onExportScript={() => exportText(`${safeFileName(script.title)}.txt`, [script])}
+              onExportLibrary={() =>
+                exportText(
+                  "tts-studio-library.txt",
+                  Object.values(store.scripts).sort((a, b) => (b.updated || 0) - (a.updated || 0)),
+                )
+              }
               onExportJson={() =>
                 download(
                   `${safeFileName(script.title)}.json`,
                   new Blob([JSON.stringify(script, null, 2)], { type: "application/json" }),
-                )
-              }
-              onExportText={() =>
-                download(
-                  `${safeFileName(script.title)}.txt`,
-                  new Blob([scriptToText(script, (id) => speakerOf(script, id))], { type: "text/plain" }),
                 )
               }
             />
@@ -479,22 +445,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </p>
           )}
 
-          <div role="tablist" className="mb-4 flex gap-1 border-b border-rule">
-            {MAIN_TABS.map(([id, label]) => (
-              <button
-                key={id}
-                role="tab"
-                type="button"
-                aria-selected={mainTab === id}
-                onClick={() => setMainTab(id)}
-                className={`-mb-px border-b-2 px-2.5 py-2 ${
-                  mainTab === id ? "border-current font-semibold" : "border-transparent text-muted hover:text-ink"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <Tabs tabs={MAIN_TABS} active={mainTab} onSelect={setMainTab} label="Script view" />
 
           {mainTab === "lines" ? (
             <ScriptLines
@@ -510,7 +461,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               }}
             />
           ) : (
-            <BulkText reader={reader} onApplied={() => setMainTab("lines")} />
+            <BulkText key={script.id} reader={reader} onApplied={() => setMainTab("lines")} />
           )}
 
           <p className="mt-10 border-t border-rule pt-5 text-sm leading-relaxed text-muted">
@@ -624,6 +575,15 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           </div>
         </div>
       </footer>
+
+      {importOpen && (
+        <ImportDialog
+          catalog={catalog}
+          existing={store.scripts}
+          onImport={importScripts}
+          onClose={() => setImportOpen(false)}
+        />
+      )}
 
       {toastMsg && (
         <div

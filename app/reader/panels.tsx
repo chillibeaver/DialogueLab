@@ -20,7 +20,7 @@ export interface Reader {
   store: Store;
   script: Script;
   prefs: Prefs;
-  editScript: (fn: (draft: Script) => void) => void;
+  editScript: (fn: (draft: Script) => Script | void) => void;
   editPrefs: (fn: (draft: Prefs) => void) => void;
   editStore: (fn: (draft: Store) => void) => void;
   openScript: (id: string) => void;
@@ -344,6 +344,9 @@ export function PlaybackPanel({ reader }: { reader: Reader }) {
       <Check checked={prefs.follow} onChange={(v) => editPrefs((d) => void (d.follow = v))}>
         Scroll to the current line while playing
       </Check>
+      <Check checked={prefs.notes} onChange={(v) => editPrefs((d) => void (d.notes = v))}>
+        Show translations under each line
+      </Check>
       <Check checked={prefs.hide} onChange={(v) => editPrefs((d) => void (d.hide = v))}>
         Dictation mode: blur the text, then reveal lines one by one
       </Check>
@@ -462,16 +465,18 @@ export function LibraryPanel({
   onDuplicate,
   onDelete,
   onImport,
+  onExportScript,
+  onExportLibrary,
   onExportJson,
-  onExportText,
 }: {
   reader: Reader;
   onNew: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
-  onImport: (text: string, name: string) => void;
+  onImport: () => void;
+  onExportScript: () => void;
+  onExportLibrary: () => void;
   onExportJson: () => void;
-  onExportText: () => void;
 }) {
   const { store, script, openScript, busy, exportAudio } = reader;
   const list = Object.values(store.scripts).sort((a, b) => (b.updated || 0) - (a.updated || 0));
@@ -513,39 +518,38 @@ export function LibraryPanel({
       </div>
 
       <Rule />
-      <Heading>Import and export</Heading>
+      <Heading>Import</Heading>
+      <button type="button" className={BTN_PRIMARY} onClick={onImport}>
+        Import scripts…
+      </button>
+      <Note>
+        <p className="mt-2">
+          Paste or open listening material in the TTS Studio format, or a JSON backup. Every problem is listed by line
+          before anything is added.
+        </p>
+      </Note>
+
+      <Rule />
+      <Heading>Export</Heading>
       <div className="flex flex-wrap gap-2">
-        <button type="button" className={BTN} onClick={onExportText}>
-          Text
+        <button type="button" className={BTN} onClick={onExportScript}>
+          This script (.txt)
+        </button>
+        <button type="button" className={BTN} onClick={onExportLibrary}>
+          All scripts (.txt)
         </button>
         <button type="button" className={BTN} onClick={onExportJson}>
-          JSON
+          Backup (.json)
         </button>
         <button type="button" className={BTN} onClick={exportAudio} disabled={busy}>
           <Icon path={ICONS.download} size={16} />
-          {busy ? "Preparing…" : "Audio (MP3)"}
+          {busy ? "Preparing…" : "Audio (.mp3)"}
         </button>
       </div>
-      <label className={`${BTN} mt-2 cursor-pointer`}>
-        Import a file
-        <input
-          type="file"
-          accept=".json,.txt,application/json,text/plain"
-          className="hidden"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (!file) return;
-            const fileReader = new FileReader();
-            fileReader.onload = () => onImport(String(fileReader.result), file.name.replace(/\.[^.]+$/, ""));
-            fileReader.readAsText(file);
-            event.target.value = "";
-          }}
-        />
-      </label>
       <Note>
         <p className="mt-2">
-          Exporting audio joins every line into one MP3, in order, with the skipped speakers left out. The reference
-          this tool grew from could not do that, because browser speech never hands the audio to the page.
+          Text exports use the same format as import, so they can be edited and imported again. Audio joins every line
+          into one MP3, in order, leaving out skipped speakers.
         </p>
       </Note>
 

@@ -28,6 +28,8 @@ export interface Line {
   id: string;
   sp: string;
   text: string;
+  /** A translation or gloss shown under the line. Never spoken. */
+  note?: string;
 }
 
 export interface Script {
@@ -56,7 +58,8 @@ export interface Prefs {
   sideCollapsed: boolean;
   dict: DictRule[];
   currentId: string | null;
-  narrMode: "narr" | "prev";
+  /** Show each line's translation under it. */
+  notes: boolean;
 }
 
 export interface DictRule {
@@ -166,7 +169,7 @@ export function defaultPrefs(): Prefs {
     sideCollapsed: false,
     dict: [],
     currentId: null,
-    narrMode: "narr",
+    notes: true,
   };
 }
 

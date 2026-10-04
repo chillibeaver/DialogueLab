@@ -1,12 +1,13 @@
 /** The script itself: the line editor and the plain-text view. */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { clone, isNarrator, speakerOf, uid, type Line, type Script } from "./model";
+import { mergeIntoScript, parseScriptText, serializeScript } from "./format";
+import { clone, isNarrator, speakerOf, uid, type Line } from "./model";
 import type { Reader } from "./panels";
 import type { PlayerState } from "./player";
-import { guessLanguage, parseScriptText, PAUSE_RE, scriptToText } from "./text";
-import { BTN, BTN_PRIMARY, Code, IconButton, ICONS, INPUT, Note } from "./ui";
+import { PAUSE_RE } from "./text";
+import { BTN, BTN_PRIMARY, Code, Diagnostics, IconButton, ICONS, jumpToLine, Note } from "./ui";
 
 /**
  * Renders a line, showing pause markers as chips and tinting the segment being
@@ -198,6 +199,16 @@ export function ScriptLines({
                 </div>
               )}
 
+              {prefs.notes && line.note && editing !== line.id && (
+                <p
+                  className={`mt-0.5 whitespace-pre-wrap text-sm leading-snug text-muted ${
+                    hidden ? "select-none blur-[6px]" : ""
+                  }`}
+                >
+                  {line.note}
+                </p>
+              )}
+
               {active && state.waiting && (
                 <div className="mt-1 flex items-center gap-2.5 text-xs text-muted">
                   <span>Repeat after it</span>
@@ -342,74 +353,68 @@ function LineEditor({
 
 /* ---------- Plain text ---------- */
 
+/**
+ * The script as text in the TTS Studio format, the same one used for import,
+ * so whatever is written here can be pasted into a file and back.
+ */
 export function BulkText({ reader, onApplied }: { reader: Reader; onApplied: () => void }) {
-  const { script, catalog, prefs, editScript, editPrefs, toast } = reader;
-  const [text, setText] = useState(() => scriptToText(script, (id) => speakerOf(script, id)));
+  const { script, catalog, editScript, toast } = reader;
+  const [text, setText] = useState(() => serializeScript(script, catalog));
+  const areaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  function apply(append: boolean) {
-    const draft = clone(script);
-    let switched = "";
-    if (!append) {
-      const guess = guessLanguage(text);
-      const match = guess && catalog.engines[draft.engine].languages.find((l) => l.code.startsWith(guess + "-"));
-      if (match && match.code !== draft.lang) {
-        draft.lang = match.code;
-        switched = match.code;
-      }
-      draft.speakers = [];
-    }
-    const lines = parseScriptText(text, draft, prefs.narrMode);
-    draft.lines = append ? [...script.lines, ...lines] : lines;
+  const result = useMemo(
+    () =>
+      parseScriptText(text, catalog, {
+        mode: "script",
+        defaults: { title: script.title, lang: script.lang, engine: script.engine, model: script.model },
+      }),
+    [text, catalog, script.title, script.lang, script.engine, script.model],
+  );
+  const item = result.items[0];
+  const blocked = result.errors.length > 0 || !item;
 
-    // Give every speaker the parser invented a distinct catalog voice.
-    draft.speakers.forEach((sp, index) => {
-      if (!sp.voice) sp.voice = catalog.voices[index % catalog.voices.length].name;
-    });
-    if (!draft.speakers.length) draft.speakers = clone(script.speakers);
-
-    editScript(() => draft);
+  function apply(mode: "replace" | "append") {
+    if (blocked) return;
+    const snapshot = clone(script);
+    editScript((draft) => mergeIntoScript(draft, item, catalog, mode));
     onApplied();
-    toast(
-      append
-        ? `Added ${lines.length} ${lines.length === 1 ? "line" : "lines"}`
-        : `Created ${lines.length} ${lines.length === 1 ? "line" : "lines"}` +
-            (switched ? `; language set to ${switched}` : ""),
-    );
+    const n = item.lines.length;
+    const lines = `${n} ${n === 1 ? "line" : "lines"}`;
+    toast(mode === "replace" ? `Script replaced: ${lines}` : `Added ${lines}`, () => editScript(() => snapshot));
   }
 
   return (
     <div>
       <Note>
         <p>
-          One line per row, written as <Code>Name: line</Code> (a full-width colon works too). New names become
-          speakers and each gets its own voice. To pause inside a line, write <Code>[1.5]</Code> or{" "}
-          <Code>[pause 2]</Code>, in seconds.
+          Each line is <Code>Name: what they say</Code>; with a single speaker the name can be left out. Declare
+          speakers with <Code>@speaker Claire: female</Code>, or pick a voice with <Code>@speaker Paul: Charon</Code>.
+          A line starting with <Code>&gt;</Code> is the translation of the line above and is never read aloud.{" "}
+          <Code>[1.5]</Code> pauses for 1.5 seconds.
         </p>
       </Note>
       <textarea
+        ref={areaRef}
         value={text}
         spellCheck={false}
-        aria-label="Script text, one line per row"
+        aria-label="Script as text"
         onChange={(e) => setText(e.target.value)}
-        className="mt-3 min-h-[52vh] w-full resize-y rounded-lg border border-rule bg-surface px-3.5 py-3 font-read leading-[1.7]"
+        className="mt-3 min-h-[52vh] w-full resize-y rounded-lg border border-rule bg-surface px-3.5 py-3 font-read leading-[1.7] focus:border-accent focus:outline-none"
       />
+      <div className="mt-3">
+        <Diagnostics
+          errors={result.errors}
+          warnings={result.warnings}
+          onJump={(line) => jumpToLine(areaRef.current, line)}
+        />
+      </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button type="button" className={BTN_PRIMARY} onClick={() => apply(false)}>
-          Replace the script
+        <button type="button" className={BTN_PRIMARY} disabled={blocked} onClick={() => apply("replace")}>
+          Apply to this script
         </button>
-        <button type="button" className={BTN} onClick={() => apply(true)}>
-          Append
+        <button type="button" className={BTN} disabled={blocked} onClick={() => apply("append")}>
+          Append these lines
         </button>
-        <span className="ml-auto text-sm text-muted">Lines without a name:</span>
-        <select
-          value={prefs.narrMode}
-          aria-label="Lines without a speaker name"
-          onChange={(e) => editPrefs((d) => void (d.narrMode = e.target.value as "narr" | "prev"))}
-          className={`${INPUT} w-auto`}
-        >
-          <option value="narr">go to the narrator</option>
-          <option value="prev">continue the previous speaker</option>
-        </select>
       </div>
     </div>
   );

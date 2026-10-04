@@ -31,15 +31,28 @@ line.
 - **Script** — a line editor. `Enter` starts the next line with the other
   speaker, so typing a dialogue is uninterrupted. Write `[1.5]` or
   `[pause 2]` inside a line for real silence at that point.
-- **Plain text** — paste a whole scene as `Name: line` rows; new names become
-  speakers and each gets its own voice.
+- **Plain text** — the script as text in the TTS Studio format, editable, with
+  every problem listed by line.
 - **Playback** — repeat each line, leave a gap, or leave a shadowing pause
   proportional to the line so you can say it back. Loop, per-speaker speed and
   volume, and a dictation mode that blurs the text until you reveal each line.
 - **Dictionary** — spelling to pronunciation, applied before synthesis only, so
   the text on screen never changes.
-- **Library** — several scripts in the browser, with text, JSON and **audio**
-  export. The audio export joins every line into one MP3.
+- **Translations** — each line can carry a translation, shown under it and
+  never read aloud.
+- **Library** — several scripts in the browser. Import listening material, and
+  export a script or the whole library as text, a JSON backup, or **audio**
+  (every line joined into one MP3).
+
+### Listening material
+
+Material is written in the **TTS Studio format**, a plain-text format for
+dialogues, monologues and single sentences with optional translations. The
+specification, with a prompt for converting existing material with a chat
+model, is [docs/listening-format.md](docs/listening-format.md); a working
+sample is [docs/examples/listening-pack.txt](docs/examples/listening-pack.txt).
+**Library → Import scripts…** checks a file line by line before importing it,
+and items carrying an `@id` replace their earlier version on re-import.
 
 The page is server-rendered: the sample scene, the cast, the 30 voices and
 every language are in the first HTML response, from the same `buildCatalog()`
@@ -301,7 +314,9 @@ server/lib/cache.ts    KV audio cache
 app/routes/home.tsx    The page: loader, layout, transport bar
 app/reader/model.ts    Script and speaker model, browser storage
 app/reader/player.ts   Playback: batching, prefetch, repeat, shadowing
-app/reader/text.ts     Pause markers, dictionary, `Name: line` parsing
+app/reader/text.ts     Pause markers, dictionary, time estimates
+app/reader/format.ts   The TTS Studio format: parse, check, write, merge
+app/reader/import-dialog.tsx  Import with line-by-line checks and a preview
 app/reader/*.tsx       Cast, playback, dictionary, library and script panels
 app/context.ts         Worker bindings handed to loaders
 test/                  Vitest suites
