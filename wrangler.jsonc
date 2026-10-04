@@ -29,7 +29,7 @@
     // The site's canonical address, for the home page's canonical link and the
     // sitemap. The home page is rendered at build time on localhost, so it
     // cannot take this from the request. With a custom domain, put it here.
-    "SITE_URL": "https://tts-studio.edgebeaver.workers.dev",
+    "SITE_URL": "https://tts.bobe.cc",
     // Hard cap on what the site spends at Google per month (US Pacific calendar
     // month, as Google bills), in US dollars. Once it is spent, nothing new is
     // synthesized until the next month; cached audio and clips still play.
