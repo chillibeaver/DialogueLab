@@ -19,5 +19,7 @@ worker-configuration.d.ts
 tts-studio-*-*.json
 *-service-account*.json
 
-# The admin's copy of every clips API key (the value of the API_KEYS secret).
+# The admin's copy of every clips API key (the value of the API_KEYS secret),
+# and the per-collaborator folders made from it, which hold their keys.
 api-keys.txt
+/handover/

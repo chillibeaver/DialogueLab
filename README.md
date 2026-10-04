@@ -49,8 +49,8 @@ line.
 Material is written in the **TTS Studio format**, a plain-text format for
 dialogues, monologues and single sentences with optional translations. The
 specification, with a prompt for converting existing material with a chat
-model, is [docs/listening-format.md](docs/listening-format.md); a working
-sample is [docs/examples/listening-pack.txt](docs/examples/listening-pack.txt).
+model, is [collaborators/listening-format.md](collaborators/listening-format.md); a working
+sample is [collaborators/listening-pack.txt](collaborators/listening-pack.txt).
 **Library → Import scripts…** checks a file line by line before importing it,
 and items carrying an `@id` replace their earlier version on re-import.
 
@@ -74,7 +74,7 @@ are correct on whatever domain the Worker is deployed to.
 `POST /api/v1/clips` and `GET /api/v1/clips/<id>.mp3` give pages built
 elsewhere, such as a course's HTML exercises, permanent audio URLs. The full
 guide, written for the AI agents that build those pages, is
-[docs/clips-api.md](docs/clips-api.md); a deployment serves it at `/llms.txt`
+[collaborators/clips-api.md](collaborators/clips-api.md); a deployment serves it at `/llms.txt`
 with its own address filled in.
 
 - **Made once, with a key.** `POST /api/v1/clips` takes up to 100 sentences or
@@ -295,8 +295,8 @@ npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
 
 # Clips API: storage for published clips, and one key per collaborator.
 npx wrangler r2 bucket create tts-studio-clips
-npm run api-key -- teammate     # prints a key, and what to do with it
-npx wrangler secret put API_KEYS
+npm run api-key -- teammate --site https://your-site   # see "API keys" below
+npm run api-keys:push
 
 npm run deploy
 ```
@@ -316,15 +316,28 @@ Without `TURNSTILE_SECRET_KEY`, `/api/tts` refuses every request (it fails close
 | `API_DAILY_CHARS` | `200000` | Characters each clips API key may send to Google per UTC day (about US$6 on Chirp 3: HD). |
 | `SUBREQUEST_BUDGET` | `40` | Google calls plus KV and R2 operations one request may make. The free plan allows 50; on a paid plan use e.g. `9000`. |
 
-#### API keys
+#### API keys and collaborators
 
-Keys are not issued by any service: you make them. `npm run api-key -- <name>`
-prints a random key and the line to install. `API_KEYS` holds every key as
-`name:secret`, comma-separated, and **`wrangler secret put` replaces the whole
-value**, so adding a second collaborator means entering both entries. Cloudflare
-never shows a secret again; keep the list in a password manager. To revoke one
-person, put the list back without their entry. The collaborator only gets the
-part after the colon, which their tools send as `Authorization: Bearer …`.
+Everything a collaborator needs lives in [collaborators/](collaborators/): the
+listening format, the guide for AI agents, and the build scripts. Keys are made
+here, by you:
+
+```sh
+npm run api-key -- teammate --site https://your-site
+```
+
+- A new name gets a random key, added to `api-keys.txt`: your copy of the
+  `API_KEYS` secret, one line of `name:secret` entries. It is kept out of git;
+  Cloudflare never shows a secret again, so this file is the only copy.
+- It builds `handover/teammate/`, also kept out of git: the files from
+  `collaborators/` with your site's address filled in, plus their `KEY.txt`.
+  Zip that folder and send it.
+- A name that already has a key keeps it; only the folder is rebuilt. Run it
+  again with `--site` once the site is deployed, or after the docs change.
+
+`npm run api-keys:push` then puts `api-keys.txt` on the server. To revoke
+someone, delete their `name:secret` entry (and its comma) from `api-keys.txt`
+and push again. Clips they already made keep working.
 
 A regional endpoint such as `https://eu-texttospeech.googleapis.com` keeps
 processing in that region, but regions do not carry every model: only the

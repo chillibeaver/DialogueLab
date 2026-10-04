@@ -1,6 +1,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import clipsGuide from "../docs/clips-api.md?raw";
+import clipsGuide from "../collaborators/clips-api.md?raw";
+import scriptJs from "../collaborators/make-clips.mjs?raw";
+import scriptPy from "../collaborators/make_clips.py?raw";
 import { api } from "../server/api";
 import { CLIPS, parseClipsRequest } from "../server/clips";
 import { readConfig, type Bindings } from "../server/config";
@@ -372,6 +374,12 @@ describe("the guide for AI agents", () => {
       ["ex1-q2", 1],
       ["ex2-dialogue", 2],
     ]);
+  });
+
+  it("prints exactly the scripts that ship beside it", () => {
+    const section = clipsGuide.slice(clipsGuide.indexOf("## A complete build script"));
+    expect(/```js\n([\s\S]*?)```/.exec(section)![1]).toBe(scriptJs);
+    expect(/```python\n([\s\S]*?)```/.exec(section)![1]).toBe(scriptPy);
   });
 
   it("states the limits the code enforces", () => {

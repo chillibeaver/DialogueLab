@@ -1,32 +1,85 @@
-// Makes an API key for the clips API and prints how to install it.
-// usage: npm run api-key -- <name>
-import { randomBytes } from "node:crypto";
+// Makes a collaborator's API key, and the folder to send them.
+//
+//   npm run api-key -- <name> [--site https://your-site]
+//
+// - A new name gets a new random key, added to api-keys.txt: the admin's copy
+//   of the API_KEYS secret, kept out of git.
+// - A name that already has a key keeps it; only the folder is rebuilt, for
+//   instance once the site's address is known.
+// - handover/<name>/ (also kept out of git) is everything to send them: the
+//   files in collaborators/, with the site's address filled in, plus KEY.txt.
+//   Zip it and send it.
+//
+// Then `npm run api-keys:push` puts api-keys.txt on the server.
 
-const name = (process.argv[2] ?? "").trim();
-if (!/^[A-Za-z0-9._-]{1,40}$/.test(name)) {
-  console.error("usage: npm run api-key -- <name>   (letters, digits, dot, dash, underscore)");
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const LIST = "api-keys.txt";
+const SOURCE = "collaborators";
+const PLACEHOLDER = "https://tts.example.com";
+
+function fail(message) {
+  console.error(message);
+  console.error("usage: npm run api-key -- <name> [--site https://your-site]");
   process.exit(1);
 }
-const secret = randomBytes(24).toString("hex");
-const entry = `${name}:${secret}`;
 
-console.log(`
-New API key for "${name}"
+const args = process.argv.slice(2);
+let site;
+const at = args.indexOf("--site");
+if (at >= 0) {
+  site = (args.splice(at, 2)[1] ?? "").replace(/\/+$/, "");
+  if (!/^https?:\/\/[^/\s]+$/.test(site)) fail("--site needs an address such as https://tts.example.org");
+}
+const name = (args[0] ?? "").trim();
+if (!/^[A-Za-z0-9._-]{1,40}$/.test(name)) fail("The name may use letters, digits, dot, dash and underscore.");
 
-  Give ${name} this key (they set it as TTS_STUDIO_KEY):
+// api-keys.txt is the exact value of the API_KEYS secret: "name:secret" entries, comma-separated.
+const entries = existsSync(LIST)
+  ? readFileSync(LIST, "utf8").split(/[,\r\n]+/).map((e) => e.trim()).filter(Boolean)
+  : [];
+let entry = entries.find((e) => e.startsWith(`${name}:`));
+const created = !entry;
+if (!entry) {
+  entry = `${name}:${randomBytes(24).toString("hex")}`;
+  entries.push(entry);
+  writeFileSync(LIST, entries.join(",") + "\n");
+}
+const secret = entry.slice(name.length + 1);
+
+// The hand-over folder, rebuilt from scratch so it never holds stale files.
+const out = join("handover", name);
+rmSync(out, { recursive: true, force: true });
+mkdirSync(out, { recursive: true });
+for (const file of readdirSync(SOURCE)) {
+  const text = readFileSync(join(SOURCE, file), "utf8");
+  writeFileSync(join(out, file), site ? text.replaceAll(PLACEHOLDER, site) : text);
+}
+writeFileSync(
+  join(out, "KEY.txt"),
+  `Your TTS Studio API key. It is personal: keep it private, and never put it
+in a page you publish.
 
     ${secret}
 
-  Install it on the server. API_KEYS holds every key, comma-separated, and
-  "wrangler secret put" REPLACES the whole value, so enter all of them:
+The build script reads it from the environment variable TTS_STUDIO_KEY:
 
-    npx wrangler secret put API_KEYS
-    -> ${entry}            (first key)
-    -> other:…,${entry}    (adding to existing keys)
+    Windows (PowerShell):  $env:TTS_STUDIO_KEY = "${secret}"
+    macOS or Linux:        export TTS_STUDIO_KEY="${secret}"
 
-  Cloudflare never shows a secret again, so keep the full list somewhere
-  safe, such as a password manager. To revoke someone, put the list back
-  without their entry.
+Site: ${site ?? "(not set yet)"}
+${site ? `The guide for AI agents is also online at ${site}/llms.txt\n` : ""}`,
+);
 
-  For local development, add the same entry to API_KEYS in .dev.vars.
-`);
+console.log(`
+${created ? `New key for "${name}", added to ${LIST}.` : `"${name}" already has a key; kept it.`}
+
+Send this folder (zip it):  ${out}${site ? "" : `
+
+  Note: the guide still says ${PLACEHOLDER}. Once the site is deployed, run
+  npm run api-key -- ${name} --site https://your-site   to fill in the address.`}
+${created ? `
+Then put the updated list on the server:  npm run api-keys:push
+` : ""}`);

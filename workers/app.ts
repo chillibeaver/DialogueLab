@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { createRequestHandler, RouterContextProvider } from "react-router";
 
-import clipsGuide from "../docs/clips-api.md?raw";
+import clipsGuide from "../collaborators/clips-api.md?raw";
 import { envContext } from "../app/context";
 import { api } from "../server/api";
 import type { Bindings } from "../server/config";

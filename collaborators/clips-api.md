@@ -260,7 +260,9 @@ that, every play is free.
 ## A complete build script
 
 Node 18 or later, no dependencies. Input: a JSON file in the request format
-above, with any number of items, each with its own `ref`. Output: a JSON map
+above, with any number of items, each with its own `ref`. If you received this
+guide in a folder, both scripts are there as files: `make-clips.mjs` and
+`make_clips.py`. Output: a JSON map
 from `ref` to URL. Progress goes to the terminal; the map goes to the file.
 
 If you cannot make HTTP requests yourself (in a chat without tools, for

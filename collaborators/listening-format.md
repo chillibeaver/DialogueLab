@@ -4,7 +4,7 @@ A plain-text format for listening material: dialogues, monologues and single
 sentences. You write a file; it is imported into TTS Studio, where each item
 becomes a script that can be played line by line with Google Cloud voices.
 
-A complete, working example is [examples/listening-pack.txt](examples/listening-pack.txt).
+A complete, working example is [listening-pack.txt](listening-pack.txt).
 
 ```text
 #tts-studio 1

@@ -2,7 +2,7 @@
  * The TTS Studio script format, version 1: plain text for listening material.
  *
  * It is written by people, or by a model on their behalf, and imported here.
- * The full specification with examples is docs/listening-format.md; this module
+ * The full specification with examples is collaborators/listening-format.md; this module
  * is its reference implementation.
  *
  *   #tts-studio 1                 header, the first line of a file

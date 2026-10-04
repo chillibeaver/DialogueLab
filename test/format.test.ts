@@ -13,8 +13,8 @@ import {
 import { makeScript } from "../app/reader/model";
 import { buildCatalog } from "../server/catalog-view";
 import { readConfig } from "../server/config";
-import examplePack from "../docs/examples/listening-pack.txt?raw";
-import formatGuide from "../docs/listening-format.md?raw";
+import examplePack from "../collaborators/listening-pack.txt?raw";
+import formatGuide from "../collaborators/listening-format.md?raw";
 
 const catalog = buildCatalog(readConfig({}));
 const pack = (text: string) => parseScriptText(text, catalog, { mode: "pack" });
