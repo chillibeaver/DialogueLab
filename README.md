@@ -1,4 +1,4 @@
-# TTS Studio
+# DialogueLab
 
 French-first text-to-speech web tool backed by Google Cloud Text-to-Speech, running entirely on a single Cloudflare Worker.
 
@@ -47,7 +47,7 @@ line.
 - **Script** — a line editor. `Enter` starts the next line with the other
   speaker, so typing a dialogue is uninterrupted. Write `[1.5]` or
   `[pause 2]` inside a line for real silence at that point.
-- **Plain text** — the script as text in the TTS Studio format, editable, with
+- **Plain text** — the script as text in the DialogueLab format, editable, with
   every problem listed by line.
 - **Playback** — repeat each line, leave a gap, or leave a shadowing pause
   proportional to the line so you can say it back. Loop, per-speaker speed and
@@ -62,7 +62,7 @@ line.
 
 ### Listening material
 
-Material is written in the **TTS Studio format**, a plain-text format for
+Material is written in the **DialogueLab format**, a plain-text format for
 dialogues, monologues and single sentences with optional translations. The
 specification, with a prompt for converting existing material with a chat
 model, is [collaborators/listening-format.md](collaborators/listening-format.md); a working
@@ -460,7 +460,7 @@ app/routes/home.tsx    The page: loader, layout, transport bar
 app/reader/model.ts    Script and speaker model, browser storage
 app/reader/player.ts   Playback: batching, prefetch, repeat, shadowing
 app/reader/text.ts     Pause markers, dictionary, time estimates
-app/reader/format.ts   The TTS Studio format: parse, check, write, merge
+app/reader/format.ts   The DialogueLab format: parse, check, write, merge
 app/reader/import-dialog.tsx  Import with line-by-line checks and a preview
 app/reader/*.tsx       Cast, playback, dictionary, library and script panels
 app/context.ts         Worker bindings handed to loaders

@@ -1,7 +1,7 @@
-# The TTS Studio format (version 1)
+# The DialogueLab format (version 1)
 
 A plain-text format for listening material: dialogues, monologues and single
-sentences. You write a file; it is imported into TTS Studio, where each item
+sentences. You write a file; it is imported into DialogueLab, where each item
 becomes a script that can be played line by line with Google Cloud voices.
 
 A complete, working example is [listening-pack.txt](listening-pack.txt).
@@ -164,7 +164,7 @@ unique in the file.
 
 Languages: `fr-FR`, `fr-CA`, `en-US`, `en-GB`, `es-ES`, `de-DE`, `it-IT`,
 `pt-BR`, `ja-JP`, `ko-KR` and many more. The complete list for each engine is at
-`/api/catalog` on the TTS Studio site.
+`/api/catalog` on the DialogueLab site.
 
 ## Inside a line
 
@@ -174,7 +174,7 @@ Languages: `fr-FR`, `fr-CA`, `en-US`, `en-GB`, `es-ES`, `de-DE`, `it-IT`,
 Serveur: Le code est sur le ticket. [1] Et voilà, ça fait quatre euros.
 ```
 
-**Abbreviations.** In French scripts, TTS Studio reads common abbreviations
+**Abbreviations.** In French scripts, DialogueLab reads common abbreviations
 in full: `Mme`, `M.`, `Dr`, `qch`, `qn`, `p. ex.`, `svp` and others are read as
 *Madame*, *Monsieur*, *Docteur*, *quelque chose*, *quelqu'un*, *par exemple*,
 *s'il vous plaît*. The text on screen keeps the abbreviation. The full list is
@@ -187,7 +187,7 @@ delivery. Chirp 3: HD would read them aloud, and the importer warns about that.
 ## Translations
 
 A line starting with `>` is attached to the spoken line above it. It is shown
-under that line in TTS Studio and is never read aloud. Translations are
+under that line in DialogueLab and is never read aloud. Translations are
 optional, can be in any language, and can span several `>` lines:
 
 ```text
@@ -198,7 +198,7 @@ Claire: Bonjour ! Un café crème, s'il vous plaît.
 
 ## Checking a file
 
-Open TTS Studio, go to **Library → Import scripts…**, and paste the file or
+Open DialogueLab, go to **Library → Import scripts…**, and paste the file or
 drop it in. Every problem is listed with its line number, and clicking one
 selects that line. Nothing is imported until there are no errors, so this is
 also the way to check a file before sending it.
@@ -224,7 +224,7 @@ writing: curly quotes, non-breaking spaces before `?` and `:`, and full-width
 Give the model this, followed by your material:
 
 ```text
-Convert the listening material below into the TTS Studio format, version 1.
+Convert the listening material below into the DialogueLab format, version 1.
 
 Rules:
 - The first line is exactly: #tts-studio 1
@@ -287,7 +287,7 @@ Every voice speaks every supported language.
 
 ## Versioning
 
-The header carries the version. TTS Studio refuses a file with a newer version
+The header carries the version. DialogueLab refuses a file with a newer version
 than it understands rather than misreading it. Settings it does not know are
 skipped with a note, so a file written for a later version still imports what
 it can.

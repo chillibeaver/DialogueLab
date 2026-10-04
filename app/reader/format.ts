@@ -342,7 +342,7 @@ export function parseScriptText(input: string, catalog: FormatCatalog, options: 
         sawHeader = true;
         const version = Number(header[1]);
         if (version > FORMAT_VERSION) {
-          error(n, `This file is format version ${version}; this TTS Studio reads version ${FORMAT_VERSION}.`);
+          error(n, `This file is format version ${version}; this version of DialogueLab reads version ${FORMAT_VERSION}.`);
         }
         continue;
       }

@@ -27,11 +27,12 @@ import { estimateMs, formatDuration, safeFileName } from "../reader/text";
 import { Icon, IconButton, ICONS, Tabs, toggleButton } from "../reader/ui";
 import type { Route } from "./+types/home";
 
-const TITLE = "TTS Studio — read dialogue aloud with Google Cloud voices";
+const TITLE = "DialogueLab — read dialogue aloud with Google Cloud voices";
 const DESCRIPTION =
   "Write a dialogue, give each character a Google Cloud voice, and play it back line by line. Built for language " +
   "practice: repeat a line, leave a gap to shadow it, blur the text for dictation, and export the scene as one MP3. " +
   "French first, 50+ languages, no sign-up.";
+const SOURCE_URL = "https://github.com/chillibeaver/DialogueLab";
 
 export function meta({ loaderData }: Route.MetaArgs) {
   const url = loaderData?.siteUrl;
@@ -408,6 +409,16 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               ? `${script.lines.length} ${script.lines.length === 1 ? "line" : "lines"}, about ${formatDuration(total)}`
               : "No lines yet"}
           </span>
+          <a
+            href={SOURCE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="DialogueLab on GitHub"
+            title="DialogueLab on GitHub"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted transition-colors hover:bg-soft hover:text-ink"
+          >
+            <Icon path={ICONS.github} size={20} />
+          </a>
         </div>
       </header>
 
@@ -436,7 +447,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               onExportScript={() => exportText(`${safeFileName(script.title)}.txt`, [script])}
               onExportLibrary={() =>
                 exportText(
-                  "tts-studio-library.txt",
+                  "dialoguelab-library.txt",
                   Object.values(store.scripts).sort((a, b) => (b.updated || 0) - (a.updated || 0)),
                 )
               }

@@ -113,7 +113,7 @@ function analyzeJson(text: string, catalog: Catalog, existing: Record<string, Sc
       (s as Script).speakers.length > 0,
   );
   if (!usable.length) {
-    return { ...EMPTY, errors: [{ line: 1, message: "No scripts found in this JSON. Expected a TTS Studio backup." }] };
+    return { ...EMPTY, errors: [{ line: 1, message: "No scripts found in this JSON. Expected a DialogueLab backup." }] };
   }
 
   const normalize = (source: Script): Script => {
@@ -220,7 +220,7 @@ export function ImportDialog({
               Import scripts
             </h2>
             <p className="text-sm text-muted">
-              Paste listening material or choose a file in the TTS Studio format; a JSON backup works too. Nothing
+              Paste listening material or choose a file in the DialogueLab format; a JSON backup works too. Nothing
               changes until you press Import, so this is also the place to check a file.
             </p>
           </div>

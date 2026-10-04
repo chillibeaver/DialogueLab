@@ -21,7 +21,7 @@ export const links: Route.LinksFunction = () => [
 const STRUCTURED_DATA = {
   "@context": "https://schema.org",
   "@type": "WebApplication",
-  name: "TTS Studio",
+  name: "DialogueLab",
   applicationCategory: "MultimediaApplication",
   operatingSystem: "Any",
   description: "French-first text to speech using Google Cloud Chirp 3: HD and Gemini-TTS voices.",
@@ -76,7 +76,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
       <h1 className="text-2xl font-semibold text-zinc-100">{message}</h1>
       <p className="mt-2 text-sm text-zinc-400">{details}</p>
       <a href="/" className="mt-6 inline-block text-sm font-medium text-emerald-400 hover:text-emerald-300">
-        Back to TTS Studio
+        Back to DialogueLab
       </a>
       {stack && (
         <pre className="mt-6 overflow-x-auto rounded-md border border-zinc-800 bg-zinc-900 p-4 text-xs text-zinc-400">

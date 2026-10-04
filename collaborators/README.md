@@ -1,9 +1,9 @@
-# TTS Studio for collaborators
+# DialogueLab for collaborators
 
-Everything you need to make listening material with TTS Studio. There are two
+Everything you need to make listening material with DialogueLab. There are two
 ways to use it; you may need one or both.
 
-## 1. Material for the TTS Studio reader
+## 1. Material for the DialogueLab reader
 
 Write dialogues, monologues or single sentences as plain text and send the file
 to the site owner, who imports it into the reader.
@@ -15,7 +15,7 @@ to the site owner, who imports it into the reader.
 
 ## 2. Audio for your own pages
 
-Build HTML exercises that play TTS Studio voices. The audio is made once, while
+Build HTML exercises that play DialogueLab voices. The audio is made once, while
 you build the page; the page then only plays permanent links, which costs
 nothing however often students listen.
 

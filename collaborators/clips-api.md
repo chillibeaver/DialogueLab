@@ -1,7 +1,7 @@
-# TTS Studio clips API: instructions for AI agents
+# DialogueLab clips API: instructions for AI agents
 
 You are building HTML listening exercises (or any page that plays spoken
-sentences). TTS Studio turns text into natural speech with Google Cloud voices
+sentences). DialogueLab turns text into natural speech with Google Cloud voices
 and gives you a **permanent URL for each sentence**. Your page plays those URLs.
 
 This document is everything you need. Base URL: `https://tts.example.com`.
@@ -36,7 +36,7 @@ Authorization: Bearer <TTS_STUDIO_KEY>
 
 Only `POST /api/v1/clips` needs it. Clip URLs are public.
 
-Keys are issued by whoever runs this TTS Studio site, one per collaborator. If
+Keys are issued by whoever runs this DialogueLab site, one per collaborator. If
 `TTS_STUDIO_KEY` is not set, ask the human to get one from them. Never invent a
 key, and never write one into a file you deliver.
 

@@ -577,7 +577,7 @@ export function LibraryPanel({
       </button>
       <Note>
         <p className="mt-2">
-          Paste or open listening material in the TTS Studio format, or a JSON backup. Every problem is listed by line
+          Paste or open listening material in the DialogueLab format, or a JSON backup. Every problem is listed by line
           before anything is added.
         </p>
       </Note>

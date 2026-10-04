@@ -63,7 +63,7 @@ for (const file of readdirSync(SOURCE)) {
 }
 writeFileSync(
   join(out, "KEY.txt"),
-  `Your TTS Studio API key. It is personal: keep it private, and never put it
+  `Your DialogueLab API key. It is personal: keep it private, and never put it
 in a page you publish.
 
     ${secret}
