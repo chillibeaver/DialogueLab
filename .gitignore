@@ -18,3 +18,6 @@ worker-configuration.d.ts
 *.iam.gserviceaccount.com.json
 tts-studio-*-*.json
 *-service-account*.json
+
+# The admin's copy of every clips API key (the value of the API_KEYS secret).
+api-keys.txt
