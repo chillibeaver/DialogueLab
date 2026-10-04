@@ -431,3 +431,108 @@ describe("POST /tts multi-speaker dialogue", () => {
     expect((await errorOf(response)).message).toMatch(/each speaker declares its own/);
   });
 });
+
+describe("POST /tts/batch", () => {
+  function postBatch(body: unknown, env: Bindings, ctx?: ExecutionContext) {
+    return api.request(
+      "/tts/batch",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
+        body: JSON.stringify(body),
+      },
+      env,
+      ctx,
+    );
+  }
+
+  const script = {
+    engine: "chirp3-hd" as const,
+    items: [
+      { text: "Bonjour madame.", voice: "Charon" },
+      { text: "Un cafe, merci.", voice: "Kore" },
+    ],
+  };
+
+  it("returns one audio payload per line, each with its own voice", async () => {
+    const fetches = stubFetch();
+    const response = await postBatch(script, baseEnv(serviceAccountJson));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as any;
+    expect(body.format).toBe("mp3");
+    expect(body.synthesized).toBe(2);
+    expect(body.characters).toBe("Bonjour madame.".length + "Un cafe, merci.".length);
+    expect(body.items).toHaveLength(2);
+    expect(body.items.map((i: any) => i.cache)).toEqual(["MISS", "MISS"]);
+    // Distinct audio per line, base64 of the stub's "audio-1" / "audio-2".
+    expect(body.items[0].audio).not.toBe(body.items[1].audio);
+
+    const voices = fetches.ttsCalls().map((call: any) => call.body.voice.name);
+    expect(voices).toEqual(["fr-FR-Chirp3-HD-Charon", "fr-FR-Chirp3-HD-Kore"]);
+  });
+
+  it("is one rate-limit unit however many lines it carries", async () => {
+    stubFetch();
+    const { limiter, keys } = fakeRateLimiter(true);
+    const many = { engine: "chirp3-hd" as const, items: Array.from({ length: 20 }, () => ({ text: "Salut." })) };
+    const response = await postBatch(many, baseEnv(serviceAccountJson, { TTS_RATE_LIMITER: limiter }));
+
+    expect(response.status).toBe(200);
+    expect(keys).toHaveLength(1);
+  });
+
+  it("re-bills only the line that changed", async () => {
+    const { kv } = fakeKv();
+    const fetches = stubFetch();
+    const env = baseEnv(serviceAccountJson, { TTS_CACHE: kv });
+
+    const first = fakeExecutionContext();
+    await postBatch(script, env, first.ctx);
+    await first.settle();
+    expect(fetches.ttsCalls()).toHaveLength(2);
+
+    const edited = { ...script, items: [script.items[0], { text: "Juste un the.", voice: "Kore" }] };
+    const second = fakeExecutionContext();
+    const response = await postBatch(edited, env, second.ctx);
+    const body = (await response.json()) as any;
+
+    expect(body.items.map((i: any) => i.cache)).toEqual(["HIT", "MISS"]);
+    expect(body.synthesized).toBe(1);
+    expect(fetches.ttsCalls()).toHaveLength(3); // only the edited line went to Google
+  });
+
+  it("rejects a batch over the character budget", async () => {
+    stubFetch();
+    const response = await postBatch(
+      { engine: "chirp3-hd", items: Array.from({ length: 30 }, () => ({ text: "x".repeat(1000) })) },
+      baseEnv(serviceAccountJson),
+    );
+    expect(response.status).toBe(413);
+    expect((await errorOf(response)).code).toBe("text_too_long");
+  });
+
+  it("rejects per-engine options that do not belong", async () => {
+    stubFetch();
+    const chirp = await postBatch(
+      { engine: "chirp3-hd", items: [{ text: "Salut", prompt: "doucement" }] },
+      baseEnv(serviceAccountJson),
+    );
+    expect((await errorOf(chirp)).message).toMatch(/only supported by the gemini engine/);
+
+    const gemini = await postBatch(
+      { engine: "gemini", items: [{ text: "Salut", speakingRate: 1.5 }] },
+      baseEnv(serviceAccountJson),
+    );
+    expect((await errorOf(gemini)).message).toMatch(/only supported by the chirp3-hd engine/);
+  });
+
+  it("rejects an empty line and an unknown voice", async () => {
+    stubFetch();
+    const empty = await postBatch({ items: [{ text: "   " }] }, baseEnv(serviceAccountJson));
+    expect((await errorOf(empty)).message).toMatch(/must not be empty/);
+
+    const voice = await postBatch({ items: [{ text: "Salut", voice: "Nope" }] }, baseEnv(serviceAccountJson));
+    expect((await errorOf(voice)).code).toBe("unknown_voice");
+  });
+});

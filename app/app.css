@@ -1,37 +1,115 @@
 @import "tailwindcss" source(".");
 
+/*
+ * One set of tokens, redefined for dark. Because they are declared in @theme,
+ * Tailwind generates real utilities (bg-surface, text-ink, border-rule …) and
+ * the dark overrides below flow through them without a second class per rule.
+ */
 @theme {
-  --font-sans:
-    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --color-bg: #f1f3f7;
+  --color-surface: #ffffff;
+  --color-ink: #18202d;
+  --color-muted: #5a6577;
+  --color-rule: #d6dce5;
+  --color-soft: #e8ecf2;
+  --color-accent: #2346c8;
+  --color-accent-ink: #ffffff;
+  --color-now: #fff7da;
+  --color-mark: #ffd84d;
+  --color-danger: #b0413e;
+
+  --font-ui:
+    "Atkinson Hyperlegible", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui,
+    -apple-system, "Segoe UI", sans-serif;
+  --font-read:
+    "Literata", "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", Georgia, serif;
 }
 
-/* The tool is dark only, so the theme is fixed rather than following the OS. */
+@layer theme {
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --color-bg: #11151c;
+      --color-surface: #191f29;
+      --color-ink: #e6e9ef;
+      --color-muted: #9aa4b4;
+      --color-rule: #2b3341;
+      --color-soft: #222a36;
+      --color-accent: #7f97ff;
+      --color-accent-ink: #0e1424;
+      --color-now: #2b2a1d;
+      --color-mark: #8c6f0e;
+      --color-danger: #e07a76;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --color-bg: #11151c;
+    --color-surface: #191f29;
+    --color-ink: #e6e9ef;
+    --color-muted: #9aa4b4;
+    --color-rule: #2b3341;
+    --color-soft: #222a36;
+    --color-accent: #7f97ff;
+    --color-accent-ink: #0e1424;
+    --color-now: #2b2a1d;
+    --color-mark: #8c6f0e;
+    --color-danger: #e07a76;
+    color-scheme: dark;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+  }
+}
+
+:root {
+  --toph: 61px;
+  --tbh: 90px;
+  color-scheme: light;
+}
+
 html {
-  color-scheme: dark;
-  background-color: var(--color-zinc-950);
+  scroll-padding-top: calc(env(safe-area-inset-top, 0px) + var(--toph) + 12px);
+  background-color: var(--color-bg);
 }
 
 body {
-  background-color: var(--color-zinc-950);
-  color: var(--color-zinc-300);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+  margin: 0;
+  background-color: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+  -webkit-text-size-adjust: 100%;
 }
 
-/* Native controls inherit the page font instead of the UA default. */
 input,
 select,
 textarea,
 button {
-  font-family: inherit;
+  font: inherit;
+  color: inherit;
 }
 
-/* Keyboard focus stays visible even where a control sets its own border. */
 :focus-visible {
-  outline: 2px solid var(--color-emerald-500);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
-audio {
-  color-scheme: dark;
+/* The countdown bar shown while a shadowing pause runs. */
+@keyframes shrink {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation-duration: 0.01ms !important;
+  }
 }

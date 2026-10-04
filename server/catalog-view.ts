@@ -1,7 +1,7 @@
 import { DEFAULT_GEMINI_MODEL, DEFAULT_VOICE, GEMINI_MODELS, listLanguages, VOICES } from "./catalog";
 import type { Config } from "./config";
 import { AUDIO_FORMATS } from "./google/tts";
-import { DIALOGUE, MAX_PROMPT_CHARS, SPEAKING_RATE } from "./request";
+import { BATCH, DIALOGUE, MAX_PROMPT_CHARS, SPEAKING_RATE } from "./request";
 
 /**
  * Everything a client needs to build its controls. Served by `GET /api/catalog`
@@ -11,7 +11,12 @@ import { DIALOGUE, MAX_PROMPT_CHARS, SPEAKING_RATE } from "./request";
 export function buildCatalog(config: Config) {
   return {
     defaults: { engine: config.defaultEngine, language: config.defaultLanguage, format: "mp3" as const },
-    limits: { maxChars: config.maxChars, maxPromptChars: MAX_PROMPT_CHARS },
+    limits: {
+      maxChars: config.maxChars,
+      maxPromptChars: MAX_PROMPT_CHARS,
+      // Per request to POST /api/tts/batch; a client splits longer scripts itself.
+      batch: { maxItems: BATCH.maxItems, maxChars: BATCH.maxChars },
+    },
     formats: Object.keys(AUDIO_FORMATS),
     voices: VOICES,
     engines: {

@@ -4,13 +4,14 @@ import { bodyLimit } from "hono/body-limit";
 import { buildCatalog } from "./catalog-view";
 import { readConfig, type Bindings } from "./config";
 import { ApiError, errorResponse, handleError } from "./errors";
-import { resolveCredential } from "./google/auth";
+import { resolveCredential, type Credential } from "./google/auth";
 import { AUDIO_FORMATS, synthesizeChunk, type AudioFormat, type SynthesisPayload } from "./google/tts";
 import { concatAudio } from "./lib/audio";
+import { bytesToBase64 } from "./lib/base64";
 import { cacheKey, readCachedAudio, writeCachedAudio, type CachedAudioMeta } from "./lib/cache";
 import { splitText } from "./lib/chunk";
 import { enforceRateLimit, verifyTurnstile } from "./protection";
-import { parseTtsRequest } from "./request";
+import { parseBatchRequest, parseTtsRequest } from "./request";
 
 type AppEnv = { Bindings: Bindings };
 
@@ -82,6 +83,69 @@ api.post(
 
     runInBackground(c, writeCachedAudio(c.env.TTS_CACHE, key, audio, meta, config.cacheTtlSeconds));
     return audioResponse(audio, options.format, meta, "MISS");
+  },
+);
+
+/**
+ * Synthesizes many short lines in one call. A reader plays a script line by
+ * line; doing that as one request per line would exhaust the per-IP rate limit
+ * within seconds, so the whole script is one request and one rate-limit unit.
+ * Each line is cached on its own, so editing one line only re-bills that line.
+ */
+api.post(
+  "/tts/batch",
+  bodyLimit({
+    maxSize: MAX_BODY_BYTES,
+    onError: (c) => errorResponse(c, new ApiError(413, "payload_too_large", "Request body is too large.")),
+  }),
+  async (c) => {
+    const config = readConfig(c.env);
+    const clientIp = c.req.header("cf-connecting-ip") ?? "unknown";
+
+    await enforceRateLimit(c.env.TTS_RATE_LIMITER, clientIp);
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new ApiError(400, "invalid_json", "Request body must be a JSON object.");
+    }
+    const { items, characters } = parseBatchRequest(body, config);
+
+    await verifyTurnstile(c.env, c.req.header("x-turnstile-token"), clientIp);
+
+    const keys = await Promise.all(items.map((item) => cacheKey({ ...item.options, payload: item.payload })));
+    const cached = await Promise.all(keys.map((key) => readCachedAudio(c.env.TTS_CACHE, key)));
+
+    // Only the misses reach Google, and only once per distinct line.
+    const pending = items.map((_, index) => index).filter((index) => !cached[index]);
+    let credential: Credential | undefined;
+    if (pending.length > 0) credential = await resolveCredential(c.env, items[0].options.engine);
+
+    const fresh = new Map<number, Uint8Array<ArrayBuffer>>();
+    await mapWithConcurrency(pending, SYNTHESIS_CONCURRENCY, async (index) => {
+      const { payload, options } = items[index];
+      const audio = await synthesizeChunk(payload, options, {
+        endpoint: config.googleEndpoint,
+        credential: credential!,
+      });
+      fresh.set(index, audio);
+      const meta: CachedAudioMeta = { chunks: 1, characters: items[index].characters };
+      runInBackground(c, writeCachedAudio(c.env.TTS_CACHE, keys[index], audio, meta, config.cacheTtlSeconds));
+    });
+
+    const format = items[0].options.format;
+    return c.json({
+      format,
+      contentType: AUDIO_FORMATS[format].contentType,
+      characters,
+      synthesized: pending.length,
+      items: items.map((item, index) => {
+        const hit = cached[index];
+        const audio = hit ? new Uint8Array(hit.audio) : fresh.get(index)!;
+        return { audio: bytesToBase64(audio), characters: item.characters, cache: hit ? "HIT" : "MISS" };
+      }),
+    });
   },
 );
 

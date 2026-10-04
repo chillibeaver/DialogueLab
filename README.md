@@ -19,27 +19,40 @@ French-first text-to-speech web tool backed by Google Cloud Text-to-Speech, runn
 
 `workers/app.ts` is the Worker entry: requests to `/api/*` go to Hono, and everything else is server-rendered by React Router.
 
-## Frontend
+## The reader
 
-One page at `/`, dark only. It is server-rendered: the voices, languages, models
-and limits come from the route loader, which reads the same `buildCatalog()` the
-API serves, so the first HTML response already contains the full form instead of
-an empty shell waiting on JavaScript.
+One page at `/`: a dialogue reader for language practice, not a one-shot text
+box. You write a scene, give each character a voice, and play it back line by
+line.
 
-- **Chirp 3: HD** — voice, language, format, speaking rate.
-- **Gemini-TTS, single voice** — adds a model picker, a style prompt with
-  presets, and buttons that insert Google's markup tags (`[sigh]`,
-  `[whispering]`, `[long pause]`, …) into the text.
-- **Gemini-TTS, dialogue** — two named speakers with their own voices, and a
-  line editor. Renaming a speaker renames it in every line that uses it.
+- **Cast** — any number of speakers, each with a name, a colour, a catalog
+  voice and, on Gemini, a direction such as *"anxious, speaking quickly"*.
+  A speaker can be set to skip, which leaves them out of playback.
+- **Script** — a line editor. `Enter` starts the next line with the other
+  speaker, so typing a dialogue is uninterrupted. Write `[1.5]` or
+  `[pause 2]` inside a line for real silence at that point.
+- **Plain text** — paste a whole scene as `Name: line` rows; new names become
+  speakers and each gets its own voice.
+- **Playback** — repeat each line, leave a gap, or leave a shadowing pause
+  proportional to the line so you can say it back. Loop, per-speaker speed and
+  volume, and a dictation mode that blurs the text until you reveal each line.
+- **Dictionary** — spelling to pronunciation, applied before synthesis only, so
+  the text on screen never changes.
+- **Library** — several scripts in the browser, with text, JSON and **audio**
+  export. The audio export joins every line into one MP3.
 
-The browser only ever calls `/api/tts` on this origin. When `TURNSTILE_SITE_KEY`
-is set, the page loads Cloudflare's script and sends a fresh token with each
-request; with the key unset, the widget is skipped entirely, which is what local
-development uses.
+The page is server-rendered: the sample scene, the cast, the 30 voices and
+every language are in the first HTML response, from the same `buildCatalog()`
+the API serves. The browser's saved library replaces the sample only after
+hydration, so the first client render still matches the server's HTML.
 
-`/robots.txt` and `/sitemap.xml` are generated from the request host, so they are
-correct on whatever domain the Worker is deployed to.
+Speed and volume are applied to the audio element rather than sent to Google,
+so changing them is instant, free, and leaves every clip cache-identical.
+Google returns no word timings, so the highlight follows whole segments rather
+than individual words.
+
+`/robots.txt` and `/sitemap.xml` are generated from the request host, so they
+are correct on whatever domain the Worker is deployed to.
 
 ## API
 
@@ -50,6 +63,46 @@ correct on whatever domain the Worker is deployed to.
 ### `GET /api/catalog`
 
 Everything a client needs to build its controls: defaults, limits, output formats, the 30 voices, and the languages and models for each engine. The default language is listed first. The data is static, so this endpoint costs nothing and is cacheable.
+
+### `POST /api/tts/batch`
+
+Synthesizes many short lines in one call. A reader plays a script line by line;
+one request per line would exhaust the per-IP rate limit within seconds, so the
+whole script is **one request and one rate-limit unit**.
+
+```jsonc
+{
+  "engine": "chirp3-hd",      // shared by every item
+  "language": "fr-FR",
+  "format": "mp3",
+  "items": [
+    { "text": "Bonjour madame.", "voice": "Charon" },
+    { "text": "Un cafe, merci.", "voice": "Kore" }
+  ]
+}
+```
+
+Each item may carry `voice`, and `prompt` (Gemini) or `speakingRate` (Chirp).
+At most 300 items and 20,000 characters per request; a client splits longer
+scripts itself, guided by `limits.batch` in the catalog.
+
+The response is JSON, with base64 audio per item:
+
+```jsonc
+{
+  "format": "mp3",
+  "contentType": "audio/mpeg",
+  "characters": 30,
+  "synthesized": 1,           // how many actually reached Google
+  "items": [
+    { "audio": "<base64>", "characters": 15, "cache": "HIT" },
+    { "audio": "<base64>", "characters": 15, "cache": "MISS" }
+  ]
+}
+```
+
+Every line is cached on its own, so **editing one line only re-bills that
+line**.
 
 ### `POST /api/tts`
 
@@ -245,7 +298,11 @@ server/google/tts.ts   Google request bodies and error mapping
 server/lib/chunk.ts    Sentence-aware splitting by UTF-8 byte budget
 server/lib/audio.ts    MP3/WAV concatenation
 server/lib/cache.ts    KV audio cache
-app/                   The page: loader, form, dialogue editor
+app/routes/home.tsx    The page: loader, layout, transport bar
+app/reader/model.ts    Script and speaker model, browser storage
+app/reader/player.ts   Playback: batching, prefetch, repeat, shadowing
+app/reader/text.ts     Pause markers, dictionary, `Name: line` parsing
+app/reader/*.tsx       Cast, playback, dictionary, library and script panels
 app/context.ts         Worker bindings handed to loaders
 test/                  Vitest suites
 ```

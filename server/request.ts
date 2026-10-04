@@ -32,6 +32,13 @@ export const SPEAKING_RATE = { min: 0.25, max: 2 } as const;
  * text can.
  */
 export const DIALOGUE = { speakers: 2, maxTurns: 100, maxBytes: 3800 } as const;
+
+/**
+ * Batch limits. A reader plays a script line by line, which would trip the
+ * per-IP rate limit within seconds if each line were its own request, so the
+ * whole script is synthesized in one call and these caps bound its cost.
+ */
+export const BATCH = { maxItems: 300, maxChars: 20_000 } as const;
 /** Google requires speaker aliases to be alphanumeric with no whitespace. */
 const SPEAKER_ALIAS = /^[A-Za-z0-9]+$/;
 
@@ -226,4 +233,101 @@ export function parseTtsRequest(body: unknown, config: Config): TtsRequest {
     characters,
     options: { engine, language, voice, format, model: input.model ?? DEFAULT_GEMINI_MODEL, prompt },
   };
+}
+
+const batchItemSchema = z.strictObject({
+  text: z.string(),
+  voice: z.string().optional(),
+  prompt: z.string().max(MAX_PROMPT_CHARS).optional(),
+  speakingRate: z.number().min(SPEAKING_RATE.min).max(SPEAKING_RATE.max).optional(),
+});
+
+const batchRequestSchema = z.strictObject({
+  engine: z.enum(ENGINES).optional(),
+  language: z.string().optional(),
+  format: z.enum(Object.keys(AUDIO_FORMATS) as [AudioFormat, ...AudioFormat[]]).optional(),
+  model: z.enum(Object.keys(GEMINI_MODELS) as [GeminiModel, ...GeminiModel[]]).optional(),
+  items: z.array(batchItemSchema).min(1).max(BATCH.maxItems),
+});
+
+export interface BatchItem {
+  payload: SynthesisPayload;
+  options: SynthesisOptions;
+  characters: number;
+}
+
+export interface BatchRequest {
+  items: BatchItem[];
+  characters: number;
+}
+
+/**
+ * Validates `POST /api/tts/batch`. Shared settings live on the body and each
+ * item only carries what differs per line, so a script is mostly its text.
+ */
+export function parseBatchRequest(body: unknown, config: Config): BatchRequest {
+  const parsed = batchRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
+    const first = issues[0];
+    throw invalid(first.path ? `${first.path}: ${first.message}` : first.message, issues);
+  }
+  const input = parsed.data;
+  const engine = input.engine ?? config.defaultEngine;
+  const format = input.format ?? "mp3";
+
+  const requestedLanguage = input.language ?? config.defaultLanguage;
+  const language = resolveLanguage(engine, requestedLanguage);
+  if (!language) throw unsupportedLanguage(engine, requestedLanguage);
+
+  if (engine === "chirp3-hd" && input.model !== undefined) {
+    throw invalid("model is only supported by the gemini engine.");
+  }
+  const model = input.model ?? DEFAULT_GEMINI_MODEL;
+
+  const items: BatchItem[] = [];
+  let characters = 0;
+
+  for (const [index, item] of input.items.entries()) {
+    const text = normalize(item.text);
+    if (!text) throw invalid(`items[${index}]: text must not be empty.`);
+
+    const count = Array.from(text).length;
+    if (count > config.maxChars) throw tooLong(count, config.maxChars);
+    characters += count;
+    if (characters > BATCH.maxChars) {
+      throw new ApiError(
+        413,
+        "text_too_long",
+        `The batch is over ${BATCH.maxChars} characters. Split the script, or synthesize fewer lines at a time.`,
+        { details: { characters, maxChars: BATCH.maxChars } },
+      );
+    }
+
+    const voice = resolveVoice(item.voice ?? DEFAULT_VOICE[engine]);
+    if (!voice) {
+      throw new ApiError(400, "unknown_voice", `Voice "${item.voice}" does not exist. See GET /api/catalog.`);
+    }
+
+    if (engine === "chirp3-hd") {
+      if (item.prompt !== undefined) throw invalid(`items[${index}]: prompt is only supported by the gemini engine.`);
+      items.push({
+        payload: { kind: "text", text },
+        characters: count,
+        options: { engine, language, voice, format, speakingRate: item.speakingRate },
+      });
+      continue;
+    }
+
+    if (item.speakingRate !== undefined) {
+      throw invalid(`items[${index}]: speakingRate is only supported by the chirp3-hd engine.`);
+    }
+    items.push({
+      payload: { kind: "text", text },
+      characters: count,
+      options: { engine, language, voice, format, model, prompt: item.prompt?.trim() || undefined },
+    });
+  }
+
+  return { items, characters };
 }
