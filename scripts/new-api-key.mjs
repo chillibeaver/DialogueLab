@@ -1,6 +1,10 @@
 // Makes a collaborator's API key, and the folder to send them.
 //
-//   npm run api-key -- <name> [--site https://your-site]
+//   npm run api-key -- <name> [https://your-site]
+//
+// The address is positional because PowerShell's npm shim drops the "--", and
+// npm then takes a "--site" flag for its own config and passes only its value.
+// "--site <address>" still works where the "--" survives.
 //
 // - A new name gets a new random key, added to api-keys.txt: the admin's copy
 //   of the API_KEYS secret, kept out of git.
@@ -22,19 +26,19 @@ const PLACEHOLDER = "https://tts.example.com";
 
 function fail(message) {
   console.error(message);
-  console.error("usage: npm run api-key -- <name> [--site https://your-site]");
+  console.error("usage: npm run api-key -- <name> [https://your-site]");
   process.exit(1);
 }
 
-const args = process.argv.slice(2);
-let site;
-const at = args.indexOf("--site");
-if (at >= 0) {
-  site = (args.splice(at, 2)[1] ?? "").replace(/\/+$/, "");
-  if (!/^https?:\/\/[^/\s]+$/.test(site)) fail("--site needs an address such as https://tts.example.org");
-}
+const args = process.argv.slice(2).filter((a) => a !== "--site");
+if (args.length > 2) fail(`Expected a name and at most one address, got: ${args.join(" ")}`);
 const name = (args[0] ?? "").trim();
 if (!/^[A-Za-z0-9._-]{1,40}$/.test(name)) fail("The name may use letters, digits, dot, dash and underscore.");
+let site;
+if (args[1] !== undefined) {
+  site = args[1].trim().replace(/\/+$/, "");
+  if (!/^https?:\/\/[^/\s]+$/.test(site)) fail("The address must look like https://tts.example.org");
+}
 
 // api-keys.txt is the exact value of the API_KEYS secret: "name:secret" entries, comma-separated.
 const entries = existsSync(LIST)
@@ -79,7 +83,7 @@ ${created ? `New key for "${name}", added to ${LIST}.` : `"${name}" already has 
 Send this folder (zip it):  ${out}${site ? "" : `
 
   Note: the guide still says ${PLACEHOLDER}. Once the site is deployed, run
-  npm run api-key -- ${name} --site https://your-site   to fill in the address.`}
+  npm run api-key -- ${name} https://your-site   to fill in the address.`}
 ${created ? `
 Then put the updated list on the server:  npm run api-keys:push
 ` : ""}`);

@@ -280,26 +280,37 @@ Without a service account, `POST /api/tts` with `"engine":"gemini"` returns
 ```sh
 npx wrangler login
 
-# Audio cache: create the namespace, then paste the printed id into wrangler.jsonc (kv_namespaces[0].id)
-npx wrangler kv namespace create tts-studio-cache
+# Audio cache. --binding writes the new namespace's id into wrangler.jsonc.
+npx wrangler kv namespace create tts-studio-cache --binding TTS_CACHE
 
-# Turnstile: create a widget in the dashboard (Turnstile → Add widget, mode "Invisible" or "Managed")
-# for your domain. The site key goes into the frontend; the secret key goes here:
+# Storage for published clips.
+npx wrangler r2 bucket create tts-studio-clips
+
+# First deploy: prints the site's address. Synthesis stays refused until the
+# secrets below are set, since bot protection fails closed.
+npm run deploy
+
+# Turnstile: in the dashboard, Turnstile → Add widget, mode "Managed", for that
+# hostname. The site key is public: set TURNSTILE_SITE_KEY in wrangler.jsonc
+# vars. The secret key goes here:
 npx wrangler secret put TURNSTILE_SECRET_KEY
 
 # Google credentials: the API key covers Chirp 3: HD
 npx wrangler secret put GOOGLE_TTS_API_KEY
 
-# Only if you want Gemini-TTS: paste the whole JSON key file content
-npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON
+# Only if you want Gemini-TTS: the whole JSON key file, piped in
+npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_JSON < service-account.json
 
-# Clips API: storage for published clips, and one key per collaborator.
-npx wrangler r2 bucket create tts-studio-clips
-npm run api-key -- teammate --site https://your-site   # see "API keys" below
+# Clips API: one key per collaborator (see "API keys" below).
+npm run api-key -- teammate https://your-site
 npm run api-keys:push
 
+# Again, to publish TURNSTILE_SITE_KEY. Secrets carry over between deploys.
 npm run deploy
 ```
+
+The reader's Turnstile widget stays invisible unless Cloudflare wants the
+visitor to tick a box; it then appears above the transport bar.
 
 Without `TURNSTILE_SECRET_KEY`, `/api/tts` refuses every request (it fails closed) unless `TURNSTILE_DISABLED=true` is set. That flag is for local development only.
 
@@ -312,7 +323,7 @@ Without `TURNSTILE_SECRET_KEY`, `/api/tts` refuses every request (it fails close
 | `MAX_CHARS` | `5000` | Maximum characters per request. |
 | `GOOGLE_TTS_ENDPOINT` | `https://texttospeech.googleapis.com` | Regional endpoint. See the caveat below before changing it. |
 | `CACHE_TTL_SECONDS` | `2592000` (30 days) | How long synthesized audio stays in KV. |
-| `TURNSTILE_SITE_KEY` | — | Public Turnstile key. Sent to the browser; leave unset to skip the widget. |
+| `TURNSTILE_SITE_KEY` | — | Public Turnstile key, sent to the browser. Required in production: without it the reader sends no token and is refused. Leave it unset locally, with `TURNSTILE_DISABLED=true`. |
 | `API_DAILY_CHARS` | `200000` | Characters each clips API key may send to Google per UTC day (about US$6 on Chirp 3: HD). |
 | `SUBREQUEST_BUDGET` | `40` | Google calls plus KV and R2 operations one request may make. The free plan allows 50; on a paid plan use e.g. `9000`. |
 
@@ -323,7 +334,7 @@ listening format, the guide for AI agents, and the build scripts. Keys are made
 here, by you:
 
 ```sh
-npm run api-key -- teammate --site https://your-site
+npm run api-key -- teammate https://your-site
 ```
 
 - A new name gets a random key, added to `api-keys.txt`: your copy of the
@@ -333,7 +344,7 @@ npm run api-key -- teammate --site https://your-site
   `collaborators/` with your site's address filled in, plus their `KEY.txt`.
   Zip that folder and send it.
 - A name that already has a key keeps it; only the folder is rebuilt. Run it
-  again with `--site` once the site is deployed, or after the docs change.
+  again with the address once the site is deployed, or after the docs change.
 
 `npm run api-keys:push` then puts `api-keys.txt` on the server. To revoke
 someone, delete their `name:secret` entry (and its comma) from `api-keys.txt`

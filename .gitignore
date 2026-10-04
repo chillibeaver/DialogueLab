@@ -23,3 +23,6 @@ tts-studio-*-*.json
 # and the per-collaborator folders made from it, which hold their keys.
 api-keys.txt
 /handover/
+
+# The admin's own deployment notes.
+/DEPLOY.md

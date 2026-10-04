@@ -39,8 +39,9 @@
 	],
 	"kv_namespaces": [
 		{
-			// Audio cache. Create with `npx wrangler kv namespace create tts-studio-cache`
-			// and paste the returned id here before deploying.
+			// Audio cache. Create with
+			// `npx wrangler kv namespace create tts-studio-cache --binding TTS_CACHE`,
+			// which adds its id here.
 			"binding": "TTS_CACHE"
 		}
 	],
