@@ -5,12 +5,12 @@ import { DEFAULT_GEMINI_MODEL, DEFAULT_VOICE, GEMINI_MODELS, listLanguages, VOIC
 import { readConfig, type Bindings } from "./config";
 import { ApiError, errorResponse, handleError } from "./errors";
 import { resolveCredential } from "./google/auth";
-import { AUDIO_FORMATS, synthesizeChunk, type AudioFormat } from "./google/tts";
+import { AUDIO_FORMATS, synthesizeChunk, type AudioFormat, type SynthesisPayload } from "./google/tts";
 import { concatAudio } from "./lib/audio";
 import { cacheKey, readCachedAudio, writeCachedAudio, type CachedAudioMeta } from "./lib/cache";
 import { splitText } from "./lib/chunk";
 import { enforceRateLimit, verifyTurnstile } from "./protection";
-import { MAX_PROMPT_CHARS, parseTtsRequest, SPEAKING_RATE } from "./request";
+import { DIALOGUE, MAX_PROMPT_CHARS, parseTtsRequest, SPEAKING_RATE } from "./request";
 
 type AppEnv = { Bindings: Bindings };
 
@@ -45,6 +45,8 @@ api.get("/catalog", (c) => {
         defaultModel: DEFAULT_GEMINI_MODEL,
         models: Object.entries(GEMINI_MODELS).map(([id, availability]) => ({ id, availability })),
         languages: listLanguages("gemini", config.defaultLanguage),
+        // Multi-speaker dialogue: send `speakers` and `turns` instead of `text`.
+        dialogue: { speakers: DIALOGUE.speakers, maxTurns: DIALOGUE.maxTurns, maxBytes: DIALOGUE.maxBytes },
       },
     },
   };
@@ -69,10 +71,17 @@ api.post(
     } catch {
       throw new ApiError(400, "invalid_json", "Request body must be a JSON object.");
     }
-    const { text, characters, options } = parseTtsRequest(body, config);
+    const { payload, characters, options } = parseTtsRequest(body, config);
 
-    const chunks = splitText(text, CHUNK_BYTES[options.engine], options.language);
-    if (options.format === "ogg_opus" && chunks.length > 1) {
+    // A dialogue is one Google request; only plain text is split and rejoined.
+    const parts: SynthesisPayload[] =
+      payload.kind === "dialogue"
+        ? [payload]
+        : splitText(payload.text, CHUNK_BYTES[options.engine], options.language).map((text) => ({
+            kind: "text" as const,
+            text,
+          }));
+    if (options.format === "ogg_opus" && parts.length > 1) {
       throw new ApiError(
         413,
         "text_too_long_for_format",
@@ -83,16 +92,16 @@ api.post(
     // Validate everything cheap first: a Turnstile token can only be redeemed once.
     await verifyTurnstile(c.env, c.req.header("x-turnstile-token"), clientIp);
 
-    const key = await cacheKey({ ...options, text });
+    const key = await cacheKey({ ...options, payload });
     const cached = await readCachedAudio(c.env.TTS_CACHE, key);
     if (cached) return audioResponse(cached.audio, options.format, cached.meta, "HIT");
 
     const credential = await resolveCredential(c.env, options.engine);
-    const parts = await mapWithConcurrency(chunks, SYNTHESIS_CONCURRENCY, (chunk) =>
-      synthesizeChunk(chunk, options, { endpoint: config.googleEndpoint, credential }),
+    const audioParts = await mapWithConcurrency(parts, SYNTHESIS_CONCURRENCY, (part) =>
+      synthesizeChunk(part, options, { endpoint: config.googleEndpoint, credential }),
     );
-    const audio = concatAudio(options.format, parts);
-    const meta: CachedAudioMeta = { chunks: chunks.length, characters };
+    const audio = concatAudio(options.format, audioParts);
+    const meta: CachedAudioMeta = { chunks: parts.length, characters };
 
     runInBackground(c, writeCachedAudio(c.env.TTS_CACHE, key, audio, meta, config.cacheTtlSeconds));
     return audioResponse(audio, options.format, meta, "MISS");

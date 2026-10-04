@@ -10,6 +10,27 @@ export const AUDIO_FORMATS = {
 } as const;
 export type AudioFormat = keyof typeof AUDIO_FORMATS;
 
+/** One line of a multi-speaker dialogue. `speaker` is a declared speaker alias. */
+export interface DialogueTurn {
+  speaker: string;
+  text: string;
+}
+
+/** Binds a speaker alias in the dialogue to a catalog voice. */
+export interface DialogueSpeaker {
+  alias: string;
+  voice: string;
+}
+
+/**
+ * What one Google request synthesizes. Plain text can be split across several
+ * requests and joined; a dialogue cannot, because splitting it would break
+ * speaker continuity, so it is always a single request.
+ */
+export type SynthesisPayload =
+  | { kind: "text"; text: string }
+  | { kind: "dialogue"; turns: readonly DialogueTurn[]; speakers: readonly DialogueSpeaker[] };
+
 interface CommonOptions {
   /** Catalog language code, e.g. "fr-FR". */
   language: string;
@@ -23,22 +44,45 @@ export type SynthesisOptions =
   | (CommonOptions & { engine: "gemini"; model: GeminiModel; prompt?: string });
 
 /** Builds the JSON body for `POST /v1/text:synthesize`. */
-export function buildSynthesizeBody(text: string, options: SynthesisOptions) {
+export function buildSynthesizeBody(payload: SynthesisPayload, options: SynthesisOptions) {
   const audioConfig: { audioEncoding: string; speakingRate?: number } = {
     audioEncoding: AUDIO_FORMATS[options.format].encoding,
   };
 
   if (options.engine === "chirp3-hd") {
+    if (payload.kind !== "text") {
+      throw new ApiError(400, "invalid_request", "Dialogue synthesis is only supported by the gemini engine.");
+    }
     if (options.speakingRate !== undefined) audioConfig.speakingRate = options.speakingRate;
     return {
-      input: { text },
+      input: { text: payload.text },
       voice: { languageCode: options.language, name: `${options.language}-Chirp3-HD-${options.voice}` },
       audioConfig,
     };
   }
 
+  const prompt = options.prompt ? { prompt: options.prompt } : {};
+
+  if (payload.kind === "dialogue") {
+    return {
+      input: { ...prompt, multiSpeakerMarkup: { turns: payload.turns } },
+      voice: {
+        languageCode: options.language,
+        modelName: options.model,
+        // `name` is omitted: each speaker's voice comes from its speaker config.
+        multiSpeakerVoiceConfig: {
+          speakerVoiceConfigs: payload.speakers.map(({ alias, voice }) => ({
+            speakerAlias: alias,
+            speakerId: voice,
+          })),
+        },
+      },
+      audioConfig,
+    };
+  }
+
   return {
-    input: options.prompt ? { prompt: options.prompt, text } : { text },
+    input: { ...prompt, text: payload.text },
     voice: { languageCode: options.language, name: options.voice, modelName: options.model },
     audioConfig,
   };
@@ -74,9 +118,9 @@ async function toApiError(response: Response): Promise<ApiError> {
   }
 }
 
-/** Synthesizes one chunk of text (must already fit the engine's byte limit). */
+/** Synthesizes one payload (must already fit the engine's byte limit). */
 export async function synthesizeChunk(
-  text: string,
+  payload: SynthesisPayload,
   options: SynthesisOptions,
   context: { endpoint: string; credential: Credential },
 ): Promise<Uint8Array<ArrayBuffer>> {
@@ -90,7 +134,7 @@ export async function synthesizeChunk(
       "content-type": "application/json",
       ...(credential.kind === "bearer" ? { authorization: `Bearer ${credential.value}` } : {}),
     },
-    body: JSON.stringify(buildSynthesizeBody(text, options)),
+    body: JSON.stringify(buildSynthesizeBody(payload, options)),
   });
   if (!response.ok) throw await toApiError(response);
 

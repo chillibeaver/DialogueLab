@@ -12,13 +12,40 @@ import {
 } from "./catalog";
 import type { Config } from "./config";
 import { ApiError } from "./errors";
-import { AUDIO_FORMATS, type AudioFormat, type SynthesisOptions } from "./google/tts";
+import {
+  AUDIO_FORMATS,
+  type AudioFormat,
+  type DialogueSpeaker,
+  type DialogueTurn,
+  type SynthesisOptions,
+  type SynthesisPayload,
+} from "./google/tts";
 
 export const MAX_PROMPT_CHARS = 1000;
 export const SPEAKING_RATE = { min: 0.25, max: 2 } as const;
 
+/**
+ * Multi-speaker limits. Exactly two speakers: three or more is rejected by
+ * Google with "Multi-speaker synthesis requires two distinct speakers"
+ * (tested, not inferred). The dialogue is capped at 4,000 bytes and we keep a
+ * margin, because a dialogue cannot be split across requests the way plain
+ * text can.
+ */
+export const DIALOGUE = { speakers: 2, maxTurns: 100, maxBytes: 3800 } as const;
+/** Google requires speaker aliases to be alphanumeric with no whitespace. */
+const SPEAKER_ALIAS = /^[A-Za-z0-9]+$/;
+
 const ttsRequestSchema = z.strictObject({
-  text: z.string(),
+  text: z.string().optional(),
+  speakers: z
+    .array(z.strictObject({ alias: z.string(), voice: z.string() }))
+    .length(DIALOGUE.speakers)
+    .optional(),
+  turns: z
+    .array(z.strictObject({ speaker: z.string(), text: z.string() }))
+    .min(1)
+    .max(DIALOGUE.maxTurns)
+    .optional(),
   engine: z.enum(ENGINES).optional(),
   language: z.string().optional(),
   voice: z.string().optional(),
@@ -29,9 +56,9 @@ const ttsRequestSchema = z.strictObject({
 });
 
 export interface TtsRequest {
-  /** NFC-normalized, trimmed input text. */
-  text: string;
-  /** Length of `text` in Unicode code points. */
+  /** What to synthesize: plain text (chunkable) or a dialogue (one request). */
+  payload: SynthesisPayload;
+  /** Length of the spoken text in Unicode code points. */
   characters: number;
   options: SynthesisOptions;
 }
@@ -48,6 +75,69 @@ export function unsupportedLanguage(engine: Engine, language: string): ApiError 
   );
 }
 
+const normalize = (value: string) => value.normalize("NFC").replace(/\r\n?/g, "\n").trim();
+
+const utf8Bytes = (value: string) => new TextEncoder().encode(value).length;
+
+function tooLong(characters: number, maxChars: number): ApiError {
+  return new ApiError(413, "text_too_long", `text has ${characters} characters; the limit is ${maxChars}.`, {
+    details: { characters, maxChars },
+  });
+}
+
+/**
+ * Validates `speakers` and `turns` into a dialogue payload. Google requires
+ * alphanumeric speaker aliases, and every turn must name a declared one.
+ */
+function parseDialogue(
+  speakers: readonly { alias: string; voice: string }[],
+  turns: readonly { speaker: string; text: string }[],
+  maxChars: number,
+): { payload: SynthesisPayload; characters: number; speakers: DialogueSpeaker[] } {
+  const resolved: DialogueSpeaker[] = [];
+  const seen = new Set<string>();
+  for (const { alias, voice: requested } of speakers) {
+    if (!SPEAKER_ALIAS.test(alias)) {
+      throw invalid(`speakers: alias "${alias}" must be alphanumeric with no spaces.`);
+    }
+    if (seen.has(alias)) throw invalid(`speakers: alias "${alias}" is used twice.`);
+    seen.add(alias);
+
+    const voice = resolveVoice(requested);
+    if (!voice) {
+      throw new ApiError(400, "unknown_voice", `Voice "${requested}" does not exist. See GET /api/catalog.`);
+    }
+    resolved.push({ alias, voice });
+  }
+
+  const parsedTurns: DialogueTurn[] = [];
+  let characters = 0;
+  for (const [index, turn] of turns.entries()) {
+    if (!seen.has(turn.speaker)) {
+      throw invalid(`turns[${index}]: speaker "${turn.speaker}" is not declared in speakers.`);
+    }
+    const text = normalize(turn.text);
+    if (!text) throw invalid(`turns[${index}]: text must not be empty.`);
+    characters += Array.from(text).length;
+    parsedTurns.push({ speaker: turn.speaker, text });
+  }
+
+  if (characters > maxChars) throw tooLong(characters, maxChars);
+
+  // A dialogue is one Google request: it cannot be split the way plain text is.
+  const bytes = parsedTurns.reduce((total, turn) => total + utf8Bytes(turn.text), 0);
+  if (bytes > DIALOGUE.maxBytes) {
+    throw new ApiError(
+      413,
+      "text_too_long",
+      `The dialogue is ${bytes} bytes; the limit is ${DIALOGUE.maxBytes}, because a dialogue is synthesized in one request.`,
+      { details: { bytes, maxBytes: DIALOGUE.maxBytes } },
+    );
+  }
+
+  return { payload: { kind: "dialogue", turns: parsedTurns, speakers: resolved }, characters, speakers: resolved };
+}
+
 /** Validates a POST /api/tts body and fills in defaults. Throws ApiError on bad input. */
 export function parseTtsRequest(body: unknown, config: Config): TtsRequest {
   const parsed = ttsRequestSchema.safeParse(body);
@@ -58,25 +148,24 @@ export function parseTtsRequest(body: unknown, config: Config): TtsRequest {
   }
   const input = parsed.data;
   const engine = input.engine ?? config.defaultEngine;
+  const isDialogue = input.turns !== undefined || input.speakers !== undefined;
 
-  const text = input.text.normalize("NFC").replace(/\r\n?/g, "\n").trim();
-  if (!text) throw invalid("text: must not be empty");
-  const characters = Array.from(text).length;
-  if (characters > config.maxChars) {
-    throw new ApiError(413, "text_too_long", `text has ${characters} characters; the limit is ${config.maxChars}.`, {
-      details: { characters, maxChars: config.maxChars },
-    });
+  if (isDialogue) {
+    if (input.text !== undefined) throw invalid("Use either text or turns, not both.");
+    if (input.turns === undefined || input.speakers === undefined) {
+      throw invalid("A dialogue needs both speakers and turns.");
+    }
+    if (input.voice !== undefined) throw invalid("voice is not used for a dialogue; each speaker declares its own.");
+    if (engine !== "gemini") {
+      throw invalid(`Dialogue synthesis is only supported by the gemini engine, not ${engine}.`);
+    }
+  } else if (input.text === undefined) {
+    throw invalid("text is required.");
   }
 
   const requestedLanguage = input.language ?? config.defaultLanguage;
   const language = resolveLanguage(engine, requestedLanguage);
   if (!language) throw unsupportedLanguage(engine, requestedLanguage);
-
-  const requestedVoice = input.voice ?? DEFAULT_VOICE[engine];
-  const voice = resolveVoice(requestedVoice);
-  if (!voice) {
-    throw new ApiError(400, "unknown_voice", `Voice "${requestedVoice}" does not exist. See GET /api/catalog.`);
-  }
 
   const format = input.format ?? "mp3";
 
@@ -84,22 +173,57 @@ export function parseTtsRequest(body: unknown, config: Config): TtsRequest {
     if (input.model !== undefined || input.prompt !== undefined) {
       throw invalid("model and prompt are only supported by the gemini engine.");
     }
-    return { text, characters, options: { engine, language, voice, format, speakingRate: input.speakingRate } };
+    const text = normalize(input.text!);
+    if (!text) throw invalid("text: must not be empty");
+    const characters = Array.from(text).length;
+    if (characters > config.maxChars) throw tooLong(characters, config.maxChars);
+
+    const voice = resolveVoice(input.voice ?? DEFAULT_VOICE[engine]);
+    if (!voice) {
+      throw new ApiError(400, "unknown_voice", `Voice "${input.voice}" does not exist. See GET /api/catalog.`);
+    }
+    return {
+      payload: { kind: "text", text },
+      characters,
+      options: { engine, language, voice, format, speakingRate: input.speakingRate },
+    };
   }
 
   if (input.speakingRate !== undefined) {
     throw invalid("speakingRate is only supported by the chirp3-hd engine; describe the pace in prompt instead.");
   }
+
+  let payload: SynthesisPayload;
+  let characters: number;
+  let voice: string;
+
+  if (isDialogue) {
+    let speakers: DialogueSpeaker[];
+    ({ payload, characters, speakers } = parseDialogue(input.speakers!, input.turns!, config.maxChars));
+    // Unused when building a dialogue body, but kept so the cache key is complete.
+    voice = speakers[0].voice;
+  } else {
+    const text = normalize(input.text!);
+    if (!text) throw invalid("text: must not be empty");
+    characters = Array.from(text).length;
+    if (characters > config.maxChars) throw tooLong(characters, config.maxChars);
+    payload = { kind: "text", text };
+
+    const resolvedVoice = resolveVoice(input.voice ?? DEFAULT_VOICE[engine]);
+    if (!resolvedVoice) {
+      throw new ApiError(400, "unknown_voice", `Voice "${input.voice}" does not exist. See GET /api/catalog.`);
+    }
+    voice = resolvedVoice;
+  }
+
+  const prompt = input.prompt?.trim() || undefined;
+  if (prompt && utf8Bytes(prompt) > DIALOGUE.maxBytes) {
+    throw invalid(`prompt is too long: ${utf8Bytes(prompt)} bytes, the limit is ${DIALOGUE.maxBytes}.`);
+  }
+
   return {
-    text,
+    payload,
     characters,
-    options: {
-      engine,
-      language,
-      voice,
-      format,
-      model: input.model ?? DEFAULT_GEMINI_MODEL,
-      prompt: input.prompt?.trim() || undefined,
-    },
+    options: { engine, language, voice, format, model: input.model ?? DEFAULT_GEMINI_MODEL, prompt },
   };
 }

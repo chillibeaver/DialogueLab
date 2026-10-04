@@ -2,7 +2,7 @@
 
 French-first text-to-speech web tool backed by Google Cloud Text-to-Speech, running entirely on a single Cloudflare Worker.
 
-- **Voices:** [Chirp 3: HD](https://docs.cloud.google.com/text-to-speech/docs/chirp3-hd) (default) and, when a service account is configured, [Gemini-TTS](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts) (style prompts such as *"read slowly, like a storyteller"*).
+- **Voices:** [Chirp 3: HD](https://docs.cloud.google.com/text-to-speech/docs/chirp3-hd) (default) and, when a service account is configured, [Gemini-TTS](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts) (style prompts such as *"read slowly, like a storyteller"*, and two-speaker dialogue).
 - **Language:** French (`fr-FR`) by default; ~50 languages on Chirp 3: HD and ~90 on Gemini-TTS.
 - **No sign-up:** anyone can use it. Google credentials stay on the server, and abuse is limited by Turnstile, per-IP rate limits, a length cap and a response cache.
 
@@ -47,8 +47,38 @@ Body (only `text` is required):
 | `speakingRate` | number 0.25–2 | 1 | Chirp 3: HD only. |
 | `model` | string | `gemini-2.5-flash-tts` | Gemini only. Also `gemini-2.5-pro-tts`, `gemini-3.1-flash-tts-preview`, `gemini-2.5-flash-lite-preview-tts`. |
 | `prompt` | string ≤ 1,000 chars | — | Gemini only. A natural-language style instruction. |
+| `speakers` | array of 2 | — | Gemini only. Dialogue mode; replaces `text`. See below. |
+| `turns` | array | — | Gemini only. Dialogue mode; replaces `text`. See below. |
 
 Unknown fields are rejected, so a typo like `speed` returns an error instead of being silently ignored.
+
+#### Dialogue (two speakers)
+
+Send `speakers` and `turns` instead of `text`. Gemini-TTS only.
+
+```jsonc
+{
+  "engine": "gemini",
+  "prompt": "A relaxed conversation between two friends in a cafe.",
+  "speakers": [
+    { "alias": "Marie", "voice": "Kore" },
+    { "alias": "Paul",  "voice": "Charon" }
+  ],
+  "turns": [
+    { "speaker": "Marie", "text": "Bonjour Paul !" },
+    { "speaker": "Paul",  "text": "Salut Marie." }
+  ]
+}
+```
+
+- **Exactly two speakers.** Three or more is rejected by Google with
+  *"Multi-speaker synthesis requires two distinct speakers"*.
+- Aliases must be alphanumeric with no spaces, must be unique, and every
+  `turns[].speaker` must name one of them.
+- `voice` is not used: each speaker carries its own.
+- A dialogue is **one** Google request and is never split, because splitting it
+  would break speaker continuity. The combined turn text is therefore capped at
+  3,800 bytes (Google's limit is 4,000) and longer input returns `413`.
 
 On success, the response body is the audio (`audio/mpeg`, `audio/wav` or `audio/ogg`), with these headers:
 
@@ -182,7 +212,7 @@ In `.dev.vars`, wrap the service account JSON in **single quotes** on one line. 
 ```
 workers/app.ts         Worker entry: Hono /api + React Router SSR
 server/api.ts          Routes
-server/request.ts      Request validation and defaults (zod)
+server/request.ts      Request validation and defaults (zod), including dialogue rules
 server/catalog.ts      Engines, voices, languages, models
 server/config.ts       Bindings and vars
 server/protection.ts   Rate limiting and Turnstile

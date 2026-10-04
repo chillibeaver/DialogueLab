@@ -288,3 +288,146 @@ it("decodes real base64 audio bytes", async () => {
   const response = await postTts({ text: "Salut" }, baseEnv(serviceAccountJson));
   expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
 });
+
+describe("POST /tts multi-speaker dialogue", () => {
+  const dialogue = {
+    engine: "gemini" as const,
+    prompt: "Une conversation amicale.",
+    speakers: [
+      { alias: "Marie", voice: "Kore" },
+      { alias: "Paul", voice: "Charon" },
+    ],
+    turns: [
+      { speaker: "Marie", text: "Bonjour Paul !" },
+      { speaker: "Paul", text: "Salut Marie." },
+    ],
+  };
+
+  it("sends the multi-speaker body Google documents, in one request", async () => {
+    const fetches = stubFetch();
+    const response = await postTts(dialogue, baseEnv(serviceAccountJson));
+
+    expect(response.status).toBe(200);
+    const calls = fetches.ttsCalls();
+    // A dialogue is never split: splitting it would break speaker continuity.
+    expect(calls).toHaveLength(1);
+    expect(response.headers.get("x-tts-chunks")).toBe("1");
+    expect(calls[0].body).toEqual({
+      input: {
+        prompt: "Une conversation amicale.",
+        multiSpeakerMarkup: {
+          turns: [
+            { speaker: "Marie", text: "Bonjour Paul !" },
+            { speaker: "Paul", text: "Salut Marie." },
+          ],
+        },
+      },
+      voice: {
+        languageCode: "fr-FR",
+        modelName: "gemini-2.5-flash-tts",
+        multiSpeakerVoiceConfig: {
+          speakerVoiceConfigs: [
+            { speakerAlias: "Marie", speakerId: "Kore" },
+            { speakerAlias: "Paul", speakerId: "Charon" },
+          ],
+        },
+      },
+      audioConfig: { audioEncoding: "MP3" },
+    });
+  });
+
+  it("counts characters across all turns", async () => {
+    stubFetch();
+    const response = await postTts(dialogue, baseEnv(serviceAccountJson));
+    expect(response.headers.get("x-tts-characters")).toBe(String("Bonjour Paul !".length + "Salut Marie.".length));
+  });
+
+  it("caches a dialogue separately from the same text spoken by one voice", async () => {
+    const { kv } = fakeKv();
+    const fetches = stubFetch();
+    const env = baseEnv(serviceAccountJson, { TTS_CACHE: kv });
+
+    const first = fakeExecutionContext();
+    expect((await postTts(dialogue, env, {}, first.ctx)).headers.get("x-cache")).toBe("MISS");
+    await first.settle();
+
+    const again = await postTts(dialogue, env, {}, fakeExecutionContext().ctx);
+    expect(again.headers.get("x-cache")).toBe("HIT");
+    expect(fetches.ttsCalls()).toHaveLength(1);
+
+    const changed = await postTts(
+      { ...dialogue, turns: [{ speaker: "Marie", text: "Autre chose." }] },
+      env,
+      {},
+      fakeExecutionContext().ctx,
+    );
+    expect(changed.headers.get("x-cache")).toBe("MISS");
+    expect(fetches.ttsCalls()).toHaveLength(2);
+  });
+
+  it("rejects a dialogue on the chirp3-hd engine", async () => {
+    stubFetch();
+    const response = await postTts({ ...dialogue, engine: "chirp3-hd" }, baseEnv(serviceAccountJson));
+    expect(response.status).toBe(400);
+    expect((await errorOf(response)).message).toMatch(/only supported by the gemini engine/);
+  });
+
+  it("rejects text and turns together, and turns without speakers", async () => {
+    stubFetch();
+    const both = await postTts({ ...dialogue, text: "Bonjour" }, baseEnv(serviceAccountJson));
+    expect((await errorOf(both)).message).toMatch(/either text or turns/);
+
+    const { speakers, ...noSpeakers } = dialogue;
+    const lone = await postTts(noSpeakers, baseEnv(serviceAccountJson));
+    expect((await errorOf(lone)).message).toMatch(/both speakers and turns/);
+  });
+
+  it("requires exactly two speakers, as Google does", async () => {
+    stubFetch();
+    const three = await postTts(
+      { ...dialogue, speakers: [...dialogue.speakers, { alias: "Zoe", voice: "Leda" }] },
+      baseEnv(serviceAccountJson),
+    );
+    expect(three.status).toBe(400);
+  });
+
+  it("rejects aliases that are not alphanumeric, and duplicates", async () => {
+    stubFetch();
+    const spaced = await postTts(
+      { ...dialogue, speakers: [{ alias: "Marie C", voice: "Kore" }, dialogue.speakers[1]] },
+      baseEnv(serviceAccountJson),
+    );
+    expect((await errorOf(spaced)).message).toMatch(/alphanumeric/);
+
+    const duplicate = await postTts(
+      { ...dialogue, speakers: [dialogue.speakers[0], { alias: "Marie", voice: "Charon" }] },
+      baseEnv(serviceAccountJson),
+    );
+    expect((await errorOf(duplicate)).message).toMatch(/used twice/);
+  });
+
+  it("rejects a turn whose speaker was never declared", async () => {
+    stubFetch();
+    const response = await postTts(
+      { ...dialogue, turns: [{ speaker: "Zoe", text: "Bonjour" }] },
+      baseEnv(serviceAccountJson),
+    );
+    expect((await errorOf(response)).message).toMatch(/not declared in speakers/);
+  });
+
+  it("rejects a dialogue past the byte cap instead of splitting it", async () => {
+    stubFetch();
+    const response = await postTts(
+      { ...dialogue, turns: [{ speaker: "Marie", text: "Bonjour. ".repeat(500) }] },
+      baseEnv(serviceAccountJson),
+    );
+    expect(response.status).toBe(413);
+    expect((await errorOf(response)).message).toMatch(/synthesized in one request/);
+  });
+
+  it("rejects a single voice alongside speakers", async () => {
+    stubFetch();
+    const response = await postTts({ ...dialogue, voice: "Kore" }, baseEnv(serviceAccountJson));
+    expect((await errorOf(response)).message).toMatch(/each speaker declares its own/);
+  });
+});

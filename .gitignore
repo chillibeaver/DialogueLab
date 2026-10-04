@@ -13,3 +13,8 @@
 .dev.vars*
 worker-configuration.d.ts
 !.dev.vars.example
+
+# Google service account keys (downloaded as <project>-<keyid>.json)
+*.iam.gserviceaccount.com.json
+tts-studio-*-*.json
+*-service-account*.json
