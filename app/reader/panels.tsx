@@ -1,6 +1,7 @@
 /** The sidebar panels: cast, playback, dictionary and library. */
 
 import type { Catalog } from "../../server/catalog-view";
+import { voiceForNewSpeaker } from "./format";
 import {
   clone,
   COLORS,
@@ -125,7 +126,7 @@ export function CastPanel({ reader }: { reader: Reader }) {
           className={BTN}
           onClick={() =>
             editScript((draft) => {
-              const voice = catalog.voices[draft.speakers.length % catalog.voices.length].name;
+              const voice = voiceForNewSpeaker(draft.speakers, draft.engine, catalog);
               draft.speakers.push(makeSpeaker(nextSpeakerName(draft.speakers), nextColor(draft.speakers), voice));
             })
           }

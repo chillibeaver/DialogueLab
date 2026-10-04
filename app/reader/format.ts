@@ -269,10 +269,34 @@ export function assignVoices(
     const gender: Gender = r.gender ?? (count.male <= count.female ? "male" : "female");
     if (!r.gender) count[gender]++;
     const pool = catalog.voices.filter((v) => v.gender === gender);
-    const pick = pool.find((v) => !used.has(v.name)) ?? pool[0];
+    // With its gender's voices all taken, an undeclared speaker takes any free
+    // voice; a voice repeats only when none is free, or the gender was asked for.
+    const pick =
+      pool.find((v) => !used.has(v.name)) ??
+      (r.gender ? undefined : catalog.voices.find((v) => !used.has(v.name))) ??
+      pool[0];
     used.add(pick.name);
-    return { voice: pick.name, gender, source: r.gender ? ("gender" as const) : ("auto" as const) };
+    return {
+      voice: pick.name,
+      gender: genderOf(pick.name, catalog) ?? gender,
+      source: r.gender ? ("gender" as const) : ("auto" as const),
+    };
   });
+}
+
+/**
+ * The voice for a speaker added to a cast: one nobody in it uses yet, of the
+ * gender it has fewer of. A speaker without a voice of their own speaks with
+ * the engine's default, so that one counts as taken too. Only when every
+ * voice of that gender is taken does a voice repeat.
+ */
+export function voiceForNewSpeaker(
+  speakers: readonly { voice: string }[],
+  engine: Engine,
+  catalog: FormatCatalog,
+): string {
+  const voices = speakers.map((sp) => sp.voice || catalog.engines[engine].defaultVoice);
+  return assignVoices([...voices.map((voice) => ({ voice })), {}], catalog).at(-1)!.voice;
 }
 
 /* ---------- parsing ---------- */

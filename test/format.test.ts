@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assignVoices,
   decodeText,
   detectInput,
   FORMAT_HEADER,
@@ -9,6 +10,7 @@ import {
   parseScriptText,
   serializePack,
   serializeScript,
+  voiceForNewSpeaker,
 } from "../app/reader/format";
 import { makeScript } from "../app/reader/model";
 import { buildCatalog } from "../server/catalog-view";
@@ -318,5 +320,45 @@ describe("files", () => {
     expect(detectInput("#tts-studio 1\n")).toBe("pack");
     expect(detectInput("@lang fr-FR\n## A\nx")).toBe("pack");
     expect(detectInput("Claire: Bonjour.\nPaul: Salut.")).toBe("script");
+  });
+});
+
+describe("adding a speaker", () => {
+  const genderOf = (name: string) => catalog.voices.find((v) => v.name === name)!.gender;
+  const add = (voices: string[], engine: "chirp3-hd" | "gemini" = "chirp3-hd") =>
+    voiceForNewSpeaker(
+      voices.map((voice) => ({ voice })),
+      engine,
+      catalog,
+    );
+
+  it("never gives a voice someone already has, where picking by position did", () => {
+    // Picking by position gave the third speaker catalog.voices[2], already taken here.
+    const taken = [catalog.voices[2].name, catalog.voices[0].name];
+    expect(taken).not.toContain(add(taken));
+  });
+
+  it("evens out the cast: two men bring a woman, two women a man", () => {
+    const men = catalog.voices.filter((v) => v.gender === "male").map((v) => v.name);
+    const women = catalog.voices.filter((v) => v.gender === "female").map((v) => v.name);
+    expect(genderOf(add(men.slice(0, 2)))).toBe("female");
+    expect(genderOf(add(women.slice(0, 2)))).toBe("male");
+  });
+
+  it("counts a speaker without a voice as speaking with the engine's default", () => {
+    expect(add([""])).not.toBe(catalog.engines["chirp3-hd"].defaultVoice);
+    expect(add([""], "gemini")).not.toBe(catalog.engines.gemini.defaultVoice);
+  });
+
+  it("gives every speaker a voice of their own until the catalog runs out", () => {
+    const cast: string[] = [];
+    for (let i = 0; i < catalog.voices.length; i++) cast.push(add(cast));
+    expect(new Set(cast).size).toBe(catalog.voices.length);
+    expect(catalog.voices.map((v) => v.name)).toContain(add(cast)); // the next one repeats a voice, but still a real one
+  });
+
+  it("keeps a gender that was asked for, repeating a voice rather than switching", () => {
+    const women = assignVoices(Array.from({ length: 16 }, () => ({ gender: "female" as const })), catalog);
+    expect(women.every((w) => genderOf(w.voice) === "female")).toBe(true);
   });
 });
