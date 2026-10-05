@@ -12,8 +12,10 @@ left = items
 
 def call(batch):
     body = json.dumps({**request, "items": batch}).encode()
+    # Cloudflare refuses Python's own User-Agent (error 1010), so send another.
     req = urllib.request.Request(API, data=body, method="POST", headers={
-        "authorization": f"Bearer {key}", "content-type": "application/json"})
+        "authorization": f"Bearer {key}", "content-type": "application/json",
+        "user-agent": "dialoguelab-clips/1.0"})
     try:
         with urllib.request.urlopen(req) as response:
             return 200, json.load(response), response.headers

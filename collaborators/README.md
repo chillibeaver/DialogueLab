@@ -24,6 +24,7 @@ nothing however often students listen.
 | `clips-api.md` | Everything an AI agent needs to do this. Give it this file. |
 | `make-clips.mjs` | The build script from the guide, for Node 18 or later. |
 | `make_clips.py` | The same script for Python 3. You only need one of the two. |
+| `bundle_audio.py` | Puts a finished page's audio inside it, for pages published by Claude, which play no audio from other sites, or pages used offline. |
 | `KEY.txt` | Your API key, if this folder was made for you. |
 
 Your key is personal: keep it private, and never put it in a page you publish.

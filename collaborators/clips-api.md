@@ -147,10 +147,27 @@ A clip URL is a normal MP3 with open CORS. The simplest page code:
 
 `<audio controls src="…"></audio>` works too, when a visible player is wanted.
 
-### Offline instead
+### Pages that only play their own audio
 
-If the exercise must work without internet, download each URL once and ship the
-MP3 files next to the HTML, referencing them by relative path:
+Some places refuse media from other sites, with no error shown: **pages
+published by Claude** are one, and every play button there stays silent while
+the page links to this site. The same holds for a page that must work offline.
+For those, build the page with clip URLs as usual, then put the audio inside it
+with `bundle_audio.py` (in the folder beside this guide, Python 3.8 or later):
+
+```sh
+python bundle_audio.py exercise.html           # exercise.bundled.html, one file with the audio inside
+python bundle_audio.py exercise.html --files   # exercise-bundle/: index.html and audio/<id>.mp3
+```
+
+Publish `exercise.bundled.html` instead of the page. It holds every clip, so it
+grows by about 30 KB per sentence; Claude's pages take at most 16 MB, so give
+each exercise its own page, or use `--files` and publish `index.html` together
+with the `audio` folder. The script finds every clip URL in the page, also in
+JSON with escaped slashes, and leaves the original page as it was.
+
+Without the script: download each URL once, ship the MP3 files next to the
+HTML, and reference them by relative path:
 
 ```sh
 curl -s -o audio/ex1-q1.mp3 "https://tts.example.com/api/v1/clips/16eedb01e42ae4d3d4da6b2255f3143c.mp3"
@@ -335,8 +352,10 @@ left = items
 
 def call(batch):
     body = json.dumps({**request, "items": batch}).encode()
+    # Cloudflare refuses Python's own User-Agent (error 1010), so send another.
     req = urllib.request.Request(API, data=body, method="POST", headers={
-        "authorization": f"Bearer {key}", "content-type": "application/json"})
+        "authorization": f"Bearer {key}", "content-type": "application/json",
+        "user-agent": "dialoguelab-clips/1.0"})
     try:
         with urllib.request.urlopen(req) as response:
             return 200, json.load(response), response.headers
@@ -424,3 +443,4 @@ Errors are JSON: `{ "error": { "code": "…", "message": "…" } }`.
 - [ ] Every item has a `ref`, and the page uses the URLs those refs map to.
 - [ ] The page only plays URLs; it never calls `POST`.
 - [ ] Dialogue characters keep the same voice throughout.
+- [ ] A page published by Claude, or meant to work offline, was bundled with `bundle_audio.py`, and that is the file published.
