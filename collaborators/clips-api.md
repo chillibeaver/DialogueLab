@@ -77,7 +77,7 @@ Each **item** has either `text` or `turns`, not both:
 | --- | --- |
 | `ref` | Your own label, up to 200 characters, returned unchanged. Use it to match results to questions. |
 | `text` | One sentence or paragraph, up to 5,000 characters, read by one voice. |
-| `turns` | A dialogue joined into **one** clip, in order, up to 100 turns. Each turn is `{ "text", "voice" }`. |
+| `turns` | A dialogue as **one** clip, in order, up to 100 turns. Each turn is `{ "text", "voice" }`. With `"engine": "gemini"`, exactly two voices and up to 3,800 bytes in all, it is spoken in one go, as a conversation; otherwise each turn is made on its own and joined. |
 | `voice` | Voice for this item, or default for its turns. |
 | `speakingRate` | 0.25 to 2, Chirp 3: HD only. Prefer the default; a different speed is a different clip. |
 | `prompt` | Delivery in plain words, Gemini only, for example `"calm, slow"`. |
@@ -266,9 +266,12 @@ async function jouerDocument(morceaux) { // [{ voix, texte }, …] in order
 }
 ```
 
-Do not also make the whole document as one `turns` clip: that pays for the same
-words twice. Use `turns` only when the document is never broken into
-sentences.
+Chained clips are each spoken on their own, which sounds slower and stiffer
+than people talking. For a two-person dialogue, Gemini can do better: a
+`turns` item with `"engine": "gemini"` and two voices is spoken in one go, each
+line with the whole conversation in mind. Play that clip when the whole
+dialogue is played, and the sentence clips only when one sentence is clicked.
+It pays for the dialogue's words a second time, which is usually worth it.
 
 Give each speaker a fixed voice for the whole page, and a different gender
 where possible, so learners can tell them apart.

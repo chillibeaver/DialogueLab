@@ -229,6 +229,45 @@ describe("POST /v1/clips: making clips", () => {
     expect(await bytes(await play(body.items[0].url!, env))).toBe("audio-1audio-2");
   });
 
+  it("speaks a Gemini dialogue in two voices in one request, as a conversation", async () => {
+    const fetches = stubFetch();
+    const { env } = setup();
+    const turns = [
+      { voice: "Kore", text: "Bonjour, je peux vous aider ?" },
+      { voice: "Charon", text: "Oui, je cherche un manteau." },
+      { voice: "Kore", text: "Nous avons ce manteau noir." },
+    ];
+    const body = (await (await create({ engine: "gemini", items: [{ ref: "shop", turns }] }, env)).json()) as Body;
+
+    expect(fetches.ttsCalls()).toHaveLength(1);
+    const request = fetches.ttsCalls()[0].body as any;
+    expect(request.input.multiSpeakerMarkup.turns).toEqual([
+      { speaker: "Speaker1", text: "Bonjour, je peux vous aider ?" },
+      { speaker: "Speaker2", text: "Oui, je cherche un manteau." },
+      { speaker: "Speaker1", text: "Nous avons ce manteau noir." },
+    ]);
+    expect(request.voice.multiSpeakerVoiceConfig.speakerVoiceConfigs).toEqual([
+      { speakerAlias: "Speaker1", speakerId: "Kore" },
+      { speakerAlias: "Speaker2", speakerId: "Charon" },
+    ]);
+    expect(await bytes(await play(body.items[0].url!, env))).toBe("audio-1");
+  });
+
+  it("makes other Gemini turns one by one: one voice, three voices, or too long for one request", async () => {
+    const fetches = stubFetch();
+    const { env } = setup();
+    const long = "Une réplique assez longue pour la conversation. ".repeat(80).trim(); // over 3,800 bytes
+    const items = [
+      { turns: [{ voice: "Kore", text: "Un." }, { voice: "Kore", text: "Deux." }] },
+      { turns: [{ voice: "Kore", text: "Un." }, { voice: "Charon", text: "Deux." }, { voice: "Puck", text: "Trois." }] },
+      { turns: [{ voice: "Kore", text: long }, { voice: "Charon", text: "D'accord." }] },
+    ];
+    const body = (await (await create({ engine: "gemini", items }, env)).json()) as Body;
+
+    expect(body.items.map((i) => i.status)).toEqual(["ready", "ready", "ready"]);
+    expect(fetches.ttsCalls().some((call: any) => call.body.input.multiSpeakerMarkup)).toBe(false);
+  });
+
   it("splits a long sentence into chunks Google accepts, and joins the audio", async () => {
     const fetches = stubFetch();
     const { env } = setup();

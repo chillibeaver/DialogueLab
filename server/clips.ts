@@ -17,12 +17,28 @@ import {
 import { readConfig, type Bindings, type Config } from "./config";
 import { ApiError, errorResponse, handleError } from "./errors";
 import { resolveCredential, type Credential } from "./google/auth";
-import { googleBusyRetry, isGoogleBusy, type SynthesisOptions } from "./google/tts";
+import {
+  googleBusyRetry,
+  isGoogleBusy,
+  synthesizeChunk,
+  type DialogueSpeaker,
+  type DialogueTurn,
+  type SynthesisOptions,
+} from "./google/tts";
 import { authenticate } from "./keys";
 import { concatAudio } from "./lib/audio";
 import { splitText } from "./lib/chunk";
 import { enforceRateLimit } from "./protection";
-import { BATCH, invalid, MAX_PROMPT_CHARS, normalize, SPEAKING_RATE, tooLong, unsupportedLanguage } from "./request";
+import {
+  BATCH,
+  DIALOGUE,
+  invalid,
+  MAX_PROMPT_CHARS,
+  normalize,
+  SPEAKING_RATE,
+  tooLong,
+  unsupportedLanguage,
+} from "./request";
 import {
   BUDGET_OVERHEAD,
   CHUNK_BYTES,
@@ -92,16 +108,49 @@ interface ClipPart {
   options: SynthesisOptions;
 }
 
+interface Dialogue {
+  turns: DialogueTurn[];
+  speakers: DialogueSpeaker[];
+}
+
 interface ClipItem {
   ref: string | null;
   id: string;
   parts: ClipPart[];
+  /** Set when the turns are spoken in one go, as a conversation, rather than one by one. */
+  dialogue?: Dialogue;
   characters: number;
   /** Google calls needed to make the clip, if it does not exist yet. */
   calls: number;
 }
 
-async function clipId(engine: Engine, language: string, model: string, parts: ClipPart[]): Promise<string> {
+/**
+ * Gemini turns in exactly two voices, with one delivery prompt, and short
+ * enough for one request, are spoken in one go with Gemini's multi-speaker
+ * mode: each line is then said with the whole conversation in mind, at the
+ * pace of a conversation. Any other turns are made one by one and joined.
+ */
+function asDialogue(engine: Engine, parts: ClipPart[]): Dialogue | undefined {
+  if (engine !== "gemini") return undefined;
+  const voices = [...new Set(parts.map((part) => part.options.voice))];
+  const prompts = new Set(parts.map((part) => (part.options.engine === "gemini" ? (part.options.prompt ?? "") : "")));
+  const bytes = parts.reduce((total, part) => total + new TextEncoder().encode(part.text).length, 0);
+  if (voices.length !== DIALOGUE.speakers || prompts.size > 1 || bytes > DIALOGUE.maxBytes) return undefined;
+  // Google wants alphanumeric aliases; they name the speakers and are not spoken.
+  const alias = (voice: string) => `Speaker${voices.indexOf(voice) + 1}`;
+  return {
+    turns: parts.map((part) => ({ speaker: alias(part.options.voice), text: part.text })),
+    speakers: voices.map((voice) => ({ alias: alias(voice), voice })),
+  };
+}
+
+async function clipId(
+  engine: Engine,
+  language: string,
+  model: string,
+  parts: ClipPart[],
+  spokenTogether: boolean,
+): Promise<string> {
   const canonical = JSON.stringify({
     v: 1,
     format: "mp3",
@@ -114,6 +163,8 @@ async function clipId(engine: Engine, language: string, model: string, parts: Cl
       options.engine === "chirp3-hd" ? (options.speakingRate ?? 1) : 1,
       text,
     ]),
+    // A conversation sounds unlike its turns joined, so it is another clip; other ids are unchanged.
+    ...(spokenTogether ? { dialogue: true } : {}),
   });
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical)));
   return Array.from(digest.subarray(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
@@ -185,7 +236,10 @@ export async function parseClipsRequest(body: unknown, config: Config) {
         { details: { characters, maxChars: BATCH.maxChars } },
       );
     }
-    items.push({ ref: item.ref ?? null, id: await clipId(engine, language, model, parts), parts, characters: count, calls });
+    const dialogue = item.turns ? asDialogue(engine, parts) : undefined;
+    if (dialogue) calls = 1;
+    const id = await clipId(engine, language, model, parts, dialogue !== undefined);
+    items.push({ ref: item.ref ?? null, id, parts, dialogue, characters: count, calls });
   }
 
   return { engine, items, characters };
@@ -228,8 +282,9 @@ async function writeQuota(kv: KVNamespace | undefined, name: string, used: numbe
 
 /* ---------- synthesis ---------- */
 
-/** What a clip will cost at Google, part by part. */
+/** What a clip will cost at Google, part by part, or as one conversation. */
 function clipCost(item: ClipItem): Cost {
+  if (item.dialogue) return estimateCost(item.parts[0].options, item.characters, 1);
   return addCosts(
     item.parts.map((part) =>
       estimateCost(part.options, Array.from(part.text).length, synthesisCalls(part.text, part.options)),
@@ -237,11 +292,16 @@ function clipCost(item: ClipItem): Cost {
   );
 }
 
-/** One clip: each part (a sentence, or a dialogue turn) in its own voice, joined in order. */
+/**
+ * One clip: a conversation in one request, or else each part (a sentence, or
+ * a turn) in its own voice, joined in order.
+ */
 async function synthesizeClip(config: Config, credential: Credential, item: ClipItem) {
+  const context = { endpoint: config.googleEndpoint, credential };
+  if (item.dialogue) return synthesizeChunk({ kind: "dialogue", ...item.dialogue }, item.parts[0].options, context);
   const audio = [];
   for (const part of item.parts) {
-    audio.push(await synthesizeText(part.text, part.options, { endpoint: config.googleEndpoint, credential }));
+    audio.push(await synthesizeText(part.text, part.options, context));
   }
   return concatAudio("mp3", audio);
 }
