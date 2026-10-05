@@ -46,12 +46,17 @@
   //   API_KEYS                     - clips API keys, "name:secret,name2:secret2"
   "ratelimits": [
     {
+      // The reader, per client IP. Counted per Cloudflare location, and only a
+      // brake: the monthly budget caps the cost. Period must be 10 or 60.
       "name": "TTS_RATE_LIMITER",
       "namespace_id": "1001",
-      // Per client IP for the reader, per key for the clips API; counted per
-      // Cloudflare location. A request carries many lines, so this is a brake on
-      // runaway clients, not on use: the monthly budget caps the cost. Period
-      // must be 10 or 60.
+      "simple": { "limit": 10, "period": 60 },
+    },
+    {
+      // The clips API, per key: a course page needs hundreds of clips, a few
+      // per request. Its own namespace, so the two never share a count.
+      "name": "CLIPS_RATE_LIMITER",
+      "namespace_id": "1002",
       "simple": { "limit": 100, "period": 60 },
     },
   ],

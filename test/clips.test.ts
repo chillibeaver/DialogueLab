@@ -100,9 +100,21 @@ describe("POST /v1/clips: keys", () => {
   it("rate-limits per key rather than per IP", async () => {
     stubFetch();
     const { limiter, keys } = fakeRateLimiter(true);
-    const { env } = setup({ TTS_RATE_LIMITER: limiter });
+    const { env } = setup({ CLIPS_RATE_LIMITER: limiter });
     await create({ items: [{ text: "Bonjour." }] }, env);
     expect(keys).toEqual(["apikey:teammate"]);
+  });
+
+  it("has a limit of its own, apart from the reader's", async () => {
+    stubFetch();
+    const reader = fakeRateLimiter(false);
+    const clipsLimiter = fakeRateLimiter(true);
+    const { env } = setup({ TTS_RATE_LIMITER: reader.limiter, CLIPS_RATE_LIMITER: clipsLimiter.limiter });
+    expect((await create({ items: [{ text: "Bonjour." }] }, env)).status).toBe(200);
+    expect(reader.keys).toEqual([]);
+
+    const refused = setup({ TTS_RATE_LIMITER: clipsLimiter.limiter, CLIPS_RATE_LIMITER: fakeRateLimiter(false).limiter });
+    expect((await create({ items: [{ text: "Bonjour." }] }, refused.env)).status).toBe(429);
   });
 });
 

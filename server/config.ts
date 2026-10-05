@@ -39,7 +39,10 @@ export interface Bindings {
   CHIRP_FREE_CHARS?: string;
 
   // Bindings (optional so the API degrades gracefully when one is missing)
+  /** The reader's limit, per client IP. */
   TTS_RATE_LIMITER?: RateLimit;
+  /** The clips API's limit, per key; higher, for building pages with many clips. */
+  CLIPS_RATE_LIMITER?: RateLimit;
   TTS_CACHE?: KVNamespace;
   /** Published clips: permanent audio files behind public URLs. */
   CLIPS?: R2Bucket;

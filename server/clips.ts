@@ -280,7 +280,7 @@ clips.post(
   async (c) => {
     const config = readConfig(c.env);
     const key = await authenticate(c.env.API_KEYS, c.req.header("authorization"));
-    await enforceRateLimit(c.env.TTS_RATE_LIMITER, `apikey:${key.name}`);
+    await enforceRateLimit(c.env.CLIPS_RATE_LIMITER, `apikey:${key.name}`);
     const bucket = storage(c.env);
 
     let body: unknown;
