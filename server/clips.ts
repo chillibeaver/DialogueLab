@@ -17,7 +17,7 @@ import {
 import { readConfig, type Bindings, type Config } from "./config";
 import { ApiError, errorResponse, handleError } from "./errors";
 import { resolveCredential, type Credential } from "./google/auth";
-import type { SynthesisOptions } from "./google/tts";
+import { googleBusyRetry, isGoogleBusy, type SynthesisOptions } from "./google/tts";
 import { authenticate } from "./keys";
 import { concatAudio } from "./lib/audio";
 import { splitText } from "./lib/chunk";
@@ -319,6 +319,9 @@ clips.post(
     // Once the site's monthly budget refuses a clip, no more are made.
     let overBudget = 0;
     let budgetHit = false;
+    // Once Google says the project is over its requests per minute, no more are tried:
+    // what is left stays pending, for the next request.
+    let googleBusy = false;
     let credential: Credential | undefined;
 
     await withinBudget(
@@ -337,7 +340,7 @@ clips.post(
           room -= item.characters;
           return true;
         });
-        if (!affordable.length) return wave.length;
+        if (!affordable.length || googleBusy) return wave.length;
         if (budgetHit) {
           overBudget += affordable.length;
           return wave.length;
@@ -359,6 +362,10 @@ clips.post(
           } catch (error) {
             if (!(error instanceof ApiError)) console.error("Clip synthesis failed", error);
             refunds.push(clipCost(item));
+            if (isGoogleBusy(error)) {
+              googleBusy = true;
+              return;
+            }
             failed.set(
               item.id,
               error instanceof ApiError ? error : new ApiError(502, "synthesis_failed", "This clip could not be made."),
@@ -381,7 +388,9 @@ clips.post(
         { details: { used, limit, resetsAt: nextUtcMidnight() } },
       );
     }
-    // When nothing succeeded, the cause (credentials, quota at Google…) is the answer.
+    // Google busy and nothing made: the build scripts wait on a 429 and send the same request again.
+    if (googleBusy && !created.size) throw googleBusyRetry();
+    // When nothing succeeded, the cause (credentials, rejected text…) is the answer.
     const failures = [...failed.values()].filter((e) => e.code !== "too_many_parts");
     if (!created.size && !ready.size && failures.length) throw failures[0];
 

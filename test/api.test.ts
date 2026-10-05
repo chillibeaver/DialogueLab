@@ -590,3 +590,23 @@ describe("POST /tts/batch: long lines and the subrequest budget", () => {
     expect(rounds).toBeGreaterThan(1);
   });
 });
+
+describe("POST /tts/batch: Google's per-minute quota", () => {
+  it("tells the reader to wait and ask again, rather than fail", async () => {
+    stubFetch({
+      tts: () => Response.json({ error: { code: 429, status: "RESOURCE_EXHAUSTED" } }, { status: 429 }),
+    });
+    const response = await api.request(
+      "/tts/batch",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
+        body: JSON.stringify({ items: [{ text: "Bonjour." }] }),
+      },
+      baseEnv(serviceAccountJson),
+    );
+    expect(response.status).toBe(429);
+    expect((await errorOf(response)).code).toBe("rate_limited");
+    expect(response.headers.get("retry-after")).toBe("30");
+  });
+});

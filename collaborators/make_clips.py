@@ -20,14 +20,17 @@ def call(batch):
     except urllib.error.HTTPError as error:
         return error.code, json.load(error), error.headers
 
-for round in range(1, 61):
-    if not left:
-        break
+# Rounds in a row that made nothing ready, waits included: a long list goes on as long as it moves.
+idle = 0
+while left:
+    if idle >= 20:
+        sys.exit(f"{len(left)} clips are still pending.")
     status, body, headers = call(left[:100])
     if status == 429 and body["error"]["code"] == "rate_limited":
         seconds = int(headers.get("retry-after") or 60)
         print(f"Rate limited; waiting {seconds} s…", file=sys.stderr)
         time.sleep(seconds)
+        idle += 1
         continue
     if status != 200:
         sys.exit(f'{body["error"]["code"]}: {body["error"]["message"]}')
@@ -37,9 +40,9 @@ for round in range(1, 61):
         if item["status"] == "ready":
             urls[item["ref"]] = item["url"]
     # Send again only what is not ready yet.
+    before = len(left)
     left = [item for item in left if item["ref"] not in urls]
+    idle = 0 if len(left) < before else idle + 1
     print(f"{len(items) - len(left)} of {len(items)} ready", file=sys.stderr)
-else:
-    sys.exit(f"{len(left)} clips are still pending.")
 
 print(json.dumps(urls, indent=2, ensure_ascii=False))

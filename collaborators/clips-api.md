@@ -264,6 +264,8 @@ above, with any number of items, each with its own `ref`. If you received this
 guide in a folder, both scripts are there as files: `make-clips.mjs` and
 `make_clips.py`. Output: a JSON map
 from `ref` to URL. Progress goes to the terminal; the map goes to the file.
+A long list takes many rounds and some waits; the script keeps going as long
+as rounds make progress, and gives up only after 20 in a row that make none.
 
 If you cannot make HTTP requests yourself (in a chat without tools, for
 example), write the items file and this script, ask the human to run it, and use
@@ -282,8 +284,10 @@ if (items.some((item) => !item.ref)) throw new Error("Every item needs a ref.");
 const urls = {};
 let left = items;
 
-for (let round = 1; left.length; round++) {
-  if (round > 60) throw new Error(`${left.length} clips are still pending.`);
+// Rounds in a row that made nothing ready, waits included: a long list goes on as long as it moves.
+let idle = 0;
+while (left.length) {
+  if (idle >= 20) throw new Error(`${left.length} clips are still pending.`);
   const response = await fetch(API, {
     method: "POST",
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
@@ -295,6 +299,7 @@ for (let round = 1; left.length; round++) {
     const seconds = Number(response.headers.get("retry-after")) || 60;
     console.error(`Rate limited; waiting ${seconds} s…`);
     await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+    idle++;
     continue;
   }
   if (!response.ok) throw new Error(`${body.error.code}: ${body.error.message}`);
@@ -304,7 +309,9 @@ for (let round = 1; left.length; round++) {
     if (item.status === "ready") urls[item.ref] = item.url;
   }
   // Send again only what is not ready yet.
+  const before = left.length;
   left = left.filter((item) => !(item.ref in urls));
+  idle = left.length < before ? 0 : idle + 1;
   console.error(`${items.length - left.length} of ${items.length} ready`);
 }
 
@@ -336,14 +343,17 @@ def call(batch):
     except urllib.error.HTTPError as error:
         return error.code, json.load(error), error.headers
 
-for round in range(1, 61):
-    if not left:
-        break
+# Rounds in a row that made nothing ready, waits included: a long list goes on as long as it moves.
+idle = 0
+while left:
+    if idle >= 20:
+        sys.exit(f"{len(left)} clips are still pending.")
     status, body, headers = call(left[:100])
     if status == 429 and body["error"]["code"] == "rate_limited":
         seconds = int(headers.get("retry-after") or 60)
         print(f"Rate limited; waiting {seconds} s…", file=sys.stderr)
         time.sleep(seconds)
+        idle += 1
         continue
     if status != 200:
         sys.exit(f'{body["error"]["code"]}: {body["error"]["message"]}')
@@ -353,10 +363,10 @@ for round in range(1, 61):
         if item["status"] == "ready":
             urls[item["ref"]] = item["url"]
     # Send again only what is not ready yet.
+    before = len(left)
     left = [item for item in left if item["ref"] not in urls]
+    idle = 0 if len(left) < before else idle + 1
     print(f"{len(items) - len(left)} of {len(items)} ready", file=sys.stderr)
-else:
-    sys.exit(f"{len(left)} clips are still pending.")
 
 print(json.dumps(urls, indent=2, ensure_ascii=False))
 ```

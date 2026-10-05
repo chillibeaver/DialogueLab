@@ -7,7 +7,14 @@ import { clips } from "./clips";
 import { readConfig, type Bindings } from "./config";
 import { ApiError, errorResponse, handleError } from "./errors";
 import { resolveCredential, type Credential } from "./google/auth";
-import { AUDIO_FORMATS, synthesizeChunk, type AudioFormat, type SynthesisPayload } from "./google/tts";
+import {
+  AUDIO_FORMATS,
+  googleBusyRetry,
+  isGoogleBusy,
+  synthesizeChunk,
+  type AudioFormat,
+  type SynthesisPayload,
+} from "./google/tts";
 import { concatAudio } from "./lib/audio";
 import { bytesToBase64 } from "./lib/base64";
 import { cacheKey, readCachedAudio, writeCachedAudio, type CachedAudioMeta } from "./lib/cache";
@@ -196,7 +203,8 @@ api.post(
         });
         if (failed.length) {
           await refundBudget(c.env, config, failed.map(costOf));
-          throw firstError;
+          // Lines made before Google got busy are cached; the reader waits and asks again.
+          throw isGoogleBusy(firstError) ? googleBusyRetry() : firstError;
         }
         const ledgerCalls = config.monthlyBudgetMicros === null ? 0 : 1;
         return wave.length + ledgerCalls + making.reduce((n, w) => n + w.calls + 1, 0);

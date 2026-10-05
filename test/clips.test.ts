@@ -7,7 +7,16 @@ import { api } from "../server/api";
 import { CLIPS, parseClipsRequest } from "../server/clips";
 import { readConfig, type Bindings } from "../server/config";
 import { clearTokenCache } from "../server/google/auth";
-import { baseEnv, fakeExecutionContext, fakeKv, fakeR2, fakeRateLimiter, makeServiceAccount, stubFetch } from "./helpers";
+import {
+  baseEnv,
+  fakeExecutionContext,
+  fakeKv,
+  fakeR2,
+  fakeRateLimiter,
+  makeServiceAccount,
+  stubFetch,
+  toBase64,
+} from "./helpers";
 
 let serviceAccountJson: string;
 
@@ -424,5 +433,31 @@ describe("GET /v1/clips/:id.mp3", () => {
     expect((await api.request(`/v1/clips/${"0".repeat(32)}.mp3`, {}, env)).status).toBe(404);
     expect((await api.request("/v1/clips/not-an-id.mp3", {}, env)).status).toBe(404);
     expect(fetches.ttsCalls()).toHaveLength(0);
+  });
+});
+
+describe("POST /v1/clips: Google's per-minute quota", () => {
+  const busy = () =>
+    Response.json({ error: { code: 429, message: "Quota exceeded.", status: "RESOURCE_EXHAUSTED" } }, { status: 429 });
+  const items = ["Une.", "Deux.", "Trois."].map((text, i) => ({ ref: `s${i}`, text }));
+
+  it("leaves what Google turned away pending, not failed, for the scripts to send again", async () => {
+    let calls = 0;
+    stubFetch({
+      tts: () => (++calls === 1 ? Response.json({ audioContent: toBase64(new TextEncoder().encode("audio")) }) : busy()),
+    });
+    const response = await create({ items }, setup().env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Body;
+    expect(body.items.map((i) => i.status).sort()).toEqual(["pending", "pending", "ready"]);
+    expect(body.failed).toBe(0);
+  });
+
+  it("answers 429 rate_limited with a Retry-After when it made none, as the scripts expect", async () => {
+    stubFetch({ tts: busy });
+    const response = await create({ items }, setup().env);
+    expect(response.status).toBe(429);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe("rate_limited");
+    expect(response.headers.get("retry-after")).toBe("30");
   });
 });

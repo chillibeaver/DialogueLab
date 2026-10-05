@@ -43,6 +43,25 @@ export type SynthesisOptions =
   | (CommonOptions & { engine: "chirp3-hd"; speakingRate?: number })
   | (CommonOptions & { engine: "gemini"; model: GeminiModel; prompt?: string });
 
+/** How long to back off when Google says the project is over its requests per minute. */
+const GOOGLE_BUSY_SECONDS = 30;
+
+/** Whether an error is Google's per-minute quota, which passes rather than fails. */
+export function isGoogleBusy(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "upstream_busy";
+}
+
+/**
+ * Google's per-minute quota, put to batch clients the way our own rate limit
+ * is: wait, then send the same request again. The reader and the build
+ * scripts both do that on their own, where "upstream_busy" would stop them.
+ */
+export function googleBusyRetry(): ApiError {
+  return new ApiError(429, "rate_limited", "Google Cloud is busy for the moment. Wait, then send the request again.", {
+    headers: { "retry-after": String(GOOGLE_BUSY_SECONDS) },
+  });
+}
+
 /** Builds the JSON body for `POST /v1/text:synthesize`. */
 export function buildSynthesizeBody(payload: SynthesisPayload, options: SynthesisOptions) {
   const audioConfig: { audioEncoding: string; speakingRate?: number } = {
@@ -111,7 +130,7 @@ async function toApiError(response: Response): Promise<ApiError> {
       return new ApiError(502, "upstream_auth_failed", "The server's Google Cloud credentials were rejected.");
     case 429:
       return new ApiError(503, "upstream_busy", "Google Cloud quota exceeded. Try again shortly.", {
-        headers: { "retry-after": "30" },
+        headers: { "retry-after": String(GOOGLE_BUSY_SECONDS) },
       });
     default:
       return new ApiError(502, "upstream_error", "Google Cloud Text-to-Speech failed. Try again later.");

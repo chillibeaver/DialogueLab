@@ -396,7 +396,12 @@ settings are validated independently, so an unsupported pairing fails at Google
 rather than at request validation. See
 [Available regions](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts#available-regions).
 
-The rate limit (10 requests per 60 s per IP) is set under `ratelimits` in `wrangler.jsonc`. Cloudflare applies it per location and treats it as approximate, so it is a brake, not exact accounting.
+The rate limit (100 requests per 60 s, per IP for the reader and per key for the clips API) is set under `ratelimits` in `wrangler.jsonc`. Cloudflare applies it per location and treats it as approximate, so it is a brake, not exact accounting.
+
+Google has its own limit per project, 200 requests a minute for Chirp 3: HD. A
+batch that runs into it answers `429 rate_limited` with `Retry-After`, as for
+our own limit, so the reader and the build scripts wait and send it again; in
+the clips API, the clips not yet made stay `pending`.
 
 ## Development
 
