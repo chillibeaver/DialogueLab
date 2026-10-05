@@ -1,9 +1,11 @@
-# make_clips.py — usage: TTS_STUDIO_KEY=… python make_clips.py items.json > audio-map.json
-import json, os, sys, time, urllib.error, urllib.request
+# make_clips.py — usage: TTS_STUDIO_KEY=… python make_clips.py items.json [--pack] > audio-map.json
+# --pack also downloads every clip into audio-pack.zip, for pages that only play their own files.
+import json, os, sys, time, urllib.error, urllib.request, zipfile
 
 API = "https://tts.example.com/api/v1/clips"
 key = os.environ["TTS_STUDIO_KEY"]
-request = json.load(open(sys.argv[1], encoding="utf-8"))
+pack = "--pack" in sys.argv
+request = json.load(open([a for a in sys.argv[1:] if a != "--pack"][0], encoding="utf-8"))
 items = request.pop("items")
 if any("ref" not in item for item in items):
     sys.exit("Every item needs a ref.")
@@ -46,5 +48,15 @@ while left:
     left = [item for item in left if item["ref"] not in urls]
     idle = 0 if len(left) < before else idle + 1
     print(f"{len(items) - len(left)} of {len(items)} ready", file=sys.stderr)
+
+if pack:
+    # Every clip, and audio-map.json from each ref to its file, in one zip to hand over.
+    files = {url: "audio/" + url.rsplit("/", 1)[1] for url in urls.values()}
+    with zipfile.ZipFile("audio-pack.zip", "w") as z:
+        for url, name in files.items():
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"user-agent": "dialoguelab-clips/1.0"})) as response:
+                z.writestr(name, response.read())
+        z.writestr("audio-map.json", json.dumps({ref: files[url] for ref, url in urls.items()}, indent=2, ensure_ascii=False))
+    print(f"audio-pack.zip: {len(files)} clips", file=sys.stderr)
 
 print(json.dumps(urls, indent=2, ensure_ascii=False))

@@ -152,8 +152,21 @@ A clip URL is a normal MP3 with open CORS. The simplest page code:
 Some places refuse media from other sites, with no error shown: **pages
 published by Claude** are one, and every play button there stays silent while
 the page links to this site. The same holds for a page that must work offline.
-For those, build the page with clip URLs as usual, then put the audio inside it
-with `bundle_audio.py` (in the folder beside this guide, Python 3.8 or later):
+The audio then has to travel with the page.
+
+**If the human runs the build script for you** (you cannot reach this site
+yourself), have it pack the audio too: `python make_clips.py items.json --pack`
+also writes `audio-pack.zip`, every clip as `audio/<id>.mp3` plus
+`audio-map.json` from each ref to its file. Ask the human to upload that one
+zip, then build the page from its files: publish them with the page, referenced
+by relative path, or embed them as `data:audio/mpeg;base64,` URIs. For someone
+who does not use a terminal, write a script they can double-click instead, with
+the key inside it (they keep it private), a pause before the window closes, and
+the same packing.
+
+**If you can reach this site**, build the page with clip URLs as usual, then
+put the audio inside it with `bundle_audio.py` (in the folder beside this
+guide, Python 3.8 or later):
 
 ```sh
 python bundle_audio.py exercise.html           # exercise.bundled.html, one file with the audio inside
@@ -161,9 +174,9 @@ python bundle_audio.py exercise.html --files   # exercise-bundle/: index.html an
 ```
 
 Publish `exercise.bundled.html` instead of the page. It holds every clip, so it
-grows by about 30 KB per sentence; Claude's pages take at most 16 MB, so give
-each exercise its own page, or use `--files` and publish `index.html` together
-with the `audio` folder. The script finds every clip URL in the page, also in
+grows by 10 to 30 KB per sentence, by its length; Claude's pages take at most
+16 MB, so give a very long exercise several pages, or use `--files` and publish
+`index.html` together with the `audio` folder. The script finds every clip URL in the page, also in
 JSON with escaped slashes, and leaves the original page as it was.
 
 Without the script: download each URL once, ship the MP3 files next to the
@@ -286,7 +299,8 @@ as rounds make progress, and gives up only after 20 in a row that make none.
 
 If you cannot make HTTP requests yourself (in a chat without tools, for
 example), write the items file and this script, ask the human to run it, and use
-the map it produces.
+the map it produces. If the page will be published by Claude, ask for `--pack`
+and the zip it makes (see "Pages that only play their own audio").
 
 ```js
 // make-clips.mjs — usage: TTS_STUDIO_KEY=… node make-clips.mjs items.json > audio-map.json
@@ -338,12 +352,14 @@ console.log(JSON.stringify(urls, null, 2));
 Python 3, standard library only:
 
 ```python
-# make_clips.py — usage: TTS_STUDIO_KEY=… python make_clips.py items.json > audio-map.json
-import json, os, sys, time, urllib.error, urllib.request
+# make_clips.py — usage: TTS_STUDIO_KEY=… python make_clips.py items.json [--pack] > audio-map.json
+# --pack also downloads every clip into audio-pack.zip, for pages that only play their own files.
+import json, os, sys, time, urllib.error, urllib.request, zipfile
 
 API = "https://tts.example.com/api/v1/clips"
 key = os.environ["TTS_STUDIO_KEY"]
-request = json.load(open(sys.argv[1], encoding="utf-8"))
+pack = "--pack" in sys.argv
+request = json.load(open([a for a in sys.argv[1:] if a != "--pack"][0], encoding="utf-8"))
 items = request.pop("items")
 if any("ref" not in item for item in items):
     sys.exit("Every item needs a ref.")
@@ -386,6 +402,16 @@ while left:
     left = [item for item in left if item["ref"] not in urls]
     idle = 0 if len(left) < before else idle + 1
     print(f"{len(items) - len(left)} of {len(items)} ready", file=sys.stderr)
+
+if pack:
+    # Every clip, and audio-map.json from each ref to its file, in one zip to hand over.
+    files = {url: "audio/" + url.rsplit("/", 1)[1] for url in urls.values()}
+    with zipfile.ZipFile("audio-pack.zip", "w") as z:
+        for url, name in files.items():
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"user-agent": "dialoguelab-clips/1.0"})) as response:
+                z.writestr(name, response.read())
+        z.writestr("audio-map.json", json.dumps({ref: files[url] for ref, url in urls.items()}, indent=2, ensure_ascii=False))
+    print(f"audio-pack.zip: {len(files)} clips", file=sys.stderr)
 
 print(json.dumps(urls, indent=2, ensure_ascii=False))
 ```
